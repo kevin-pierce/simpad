@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <termios.h>
 #include <errno.h>
+#include <sys/ioctl.h>
 
 /************ DEFINES ************/
 
@@ -14,7 +15,14 @@
 
 /************ DATA ************/
 
-struct termios orig_termios;
+struct editorConfig {
+    int termRows;
+    int termCols;
+    struct termios orig_termios;
+};
+
+// Declare E of type editorConfig
+struct editorConfig E;
 
 /************ TERMINAL ************/
 /*
@@ -23,7 +31,7 @@ struct termios orig_termios;
 void die(const char *s) {
 
     // Reposition cursor at the top left corner 
-    write(STDOUT_FILENO, "\x1b[2j", 4);
+    write(STDOUT_FILENO, "\x1b[2J", 4);
     write(STDOUT_FILENO, "\x1b[H", 3);
 
     // Print the error number and give a description for it; will print the line that gave the error
@@ -33,27 +41,26 @@ void die(const char *s) {
 }
 
 void disableRawMode() {
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1) {
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1) {
         die("tcsetattr");
     }
 }
 
 
 void enableRawMode() {
-    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
+    if (tcgetattr(STDIN_FILENO, &E.orig_termios) == -1) {
         die("tcgetattr");
     }
 
     // When program exits, disable raw mode
     atexit(disableRawMode);
 
-    struct termios raw = orig_termios;
+    struct termios raw = E.orig_termios;
 
     // Disable various control characters (CTRL-C, CTRL-O, CTRL-S, CTRL-V, CTRL-Y)
-    raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
     raw.c_cflag |=(CS8);
-
     // Disable newline defaulting to the front of the line
     raw.c_oflag &= ~(OPOST);
 
@@ -81,12 +88,71 @@ char editorReadKey() {
     return c;
 }
 
-/************ OUTPUT ************/
+int getCursorPosition(int *rows, int *cols) {
+    char buf[32];
+    unsigned int i = 0;
 
+    if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) {
+        return -1;
+    }
+
+    while (i < sizeof(buf) - 1) {
+        if (read(STDIN_FILENO, &buf[i], 1) != 1) {
+            break;
+        }
+        if (buf[i] == 'R') {
+            break;
+        }
+        i++;
+    }
+
+    buf[i] = '\0';
+
+    // Ensure we receive escape sequence characters (occupying first and second characters of the buffer)
+    if (buf[0] != '\x1b' || buf[1] != '[') { 
+        return -1;
+    }
+
+    // Now we can skip to the third character of the buffer, which are the row and col valus, respectively
+    if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int getWindowSize(int *rows, int *cols) {
+    struct winsize windowSize;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &windowSize) == -1 || (windowSize.ws_col == 0)) {
+
+        // These two escape sequences ensure that the cursor reaches the bottom of the terminal
+        // C moves the cursor to the very right, and B moves the cursor to the bottom (C and B are capped to the edge of the terminal)
+        if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) {
+            return -1;
+        }
+        return getCursorPosition(rows, cols);
+    }
+    else {
+        *cols = windowSize.ws_col;
+        *rows = windowSize.ws_row;
+        return 0;
+    }
+}
+
+/************ OUTPUT ************/
+/* Draw the row starts (~) along the left side of the terminal
+
+*/
 void editorDrawRows() {
-    int y;
-    for (y=0; y<24; y++){
-        write(STDOUT_FILENO, "~\r\n", 3);
+    int x;
+    for (x=0; x<E.termRows; x++){
+        write(STDOUT_FILENO, "~", 1);
+
+        // Ensure a ~ is placed on the last line
+        if (x < E.termRows - 1){
+            write(STDOUT_FILENO, "\r\n", 2);
+        }
     }
 }
 
@@ -121,8 +187,18 @@ char editorProcessKeypress() {
 
 /************ INIT ************/
 
+/*
+    Initialize all the fields in the E struct
+*/
+void initEditor() {
+    if (getWindowSize(&E.termRows, &E.termCols) == -1) {
+        die("getWindowSize");
+    }
+}
+
 int main() {
     enableRawMode();
+    initEditor();
 
     while (1) {
         editorRefreshScreen();
