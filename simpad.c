@@ -13,6 +13,8 @@
 // This expression uses the bitwise AND to strip away the first 3 numbers (0x1f == 00011111)
 #define CTRL_KEY(k) ((k) & 0x1f)
 
+#define SIMPAD_VERSION "0.0.1"
+
 /************ DATA ************/
 
 struct editorConfig {
@@ -154,7 +156,7 @@ void bufferAppend(struct abuf *ab, const char *s, int len) {
     // Create a block of memory that is the size of our current string + the size of the string we are appending
     char *newChar = realloc(ab -> b, ab -> len + len);
 
-    if (newChar == null) {
+    if (newChar == NULL) {
         return;
     }
     // Copy the string after the current data stored in our buffer, and update the pointer and length value of buffer
@@ -168,14 +170,37 @@ void bufferFree(struct abuf *ab){
 }
 
 /************ OUTPUT ************/
-/* Draw the row starts (~) along the left side of the terminal
-
+/* Draw the row starts (~) along the left side of the terminal, and displays a welcome message upon startup
 */
-void editorDrawRows() {
+void editorDrawRows(struct abuf *ab) {
     int x;
     for (x=0; x<E.termRows; x++){
-        bufferAppend(ab, "~", 1);
+        if (x == E.termRows / 3) {
 
+            // Define variable for welcome message
+            char welcomeMsg[80];
+
+            int welcomeLen = snprintf(welcomeMsg, sizeof(welcomeMsg), "Simpad Editor -- Version %s", SIMPAD_VERSION);
+            
+            if (welcomeLen > E.termCols) {
+                welcomeLen = E.termCols;
+            }
+            // Centering the welcome message
+            int padding = (E.termCols - welcomeLen) / 2;
+            if (padding) {
+                bufferAppend(ab, "~", 1);
+                padding --;
+            }
+            while (padding--) {
+                bufferAppend(ab, " ", 1);
+            }
+            bufferAppend(ab, welcomeMsg, welcomeLen);
+        }
+        else {
+            bufferAppend(ab, "~", 1);
+        }
+
+        bufferAppend(ab, "\x1b[K", 3);
         // Ensure a ~ is placed on the last line
         if (x < E.termRows - 1){
             bufferAppend(ab, "\r\n", 2);
@@ -185,6 +210,7 @@ void editorDrawRows() {
 
 void editorRefreshScreen() {
 
+    // Initialize new buffer
     struct abuf ab = ABUF_INIT;
 
     // This is an escape sequence
@@ -192,12 +218,14 @@ void editorRefreshScreen() {
     // [ is the start of the escape sequence
     // J command indicates to clear the screen (Erase In Display)
     // 2 clears the entire screen (1 would clear until the cursor, 0 would clear the screen from the cursor to the end)
-    bufferAppend(&ab, "\x1b[2j", 4);
+    bufferAppend(&ab, "\x1b[?25l", 6);
     bufferAppend(&ab, "\x1b[H", 3);
 
+    // This function can now use bufferAppend
     editorDrawRows(&ab);
 
     bufferAppend(&ab, "\x1b[H", 3);
+    bufferAppend(&ab, "\x1b[?25l", 6);
 
     write(STDOUT_FILENO, ab.b, ab.len);
     bufferFree(&ab);
