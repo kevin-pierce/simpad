@@ -140,6 +140,33 @@ int getWindowSize(int *rows, int *cols) {
     }
 }
 
+/************ APPEND BUFFER ************/
+
+struct abuf {
+    char *b;
+    int len;
+};
+
+// Constructor for our buffer
+#define ABUF_INIT {NULL, 0}
+
+void bufferAppend(struct abuf *ab, const char *s, int len) {
+    // Create a block of memory that is the size of our current string + the size of the string we are appending
+    char *newChar = realloc(ab -> b, ab -> len + len);
+
+    if (newChar == null) {
+        return;
+    }
+    // Copy the string after the current data stored in our buffer, and update the pointer and length value of buffer
+    memcpy(&newChar[ab -> len], s, len);
+    ab -> b = newChar;
+    ab -> len += len;
+}
+
+void bufferFree(struct abuf *ab){
+    free(ab -> b);
+}
+
 /************ OUTPUT ************/
 /* Draw the row starts (~) along the left side of the terminal
 
@@ -147,27 +174,33 @@ int getWindowSize(int *rows, int *cols) {
 void editorDrawRows() {
     int x;
     for (x=0; x<E.termRows; x++){
-        write(STDOUT_FILENO, "~", 1);
+        bufferAppend(ab, "~", 1);
 
         // Ensure a ~ is placed on the last line
         if (x < E.termRows - 1){
-            write(STDOUT_FILENO, "\r\n", 2);
+            bufferAppend(ab, "\r\n", 2);
         }
     }
 }
 
 void editorRefreshScreen() {
+
+    struct abuf ab = ABUF_INIT;
+
     // This is an escape sequence
     // \x1b represents the escape character (ASCII 27) 
     // [ is the start of the escape sequence
     // J command indicates to clear the screen (Erase In Display)
     // 2 clears the entire screen (1 would clear until the cursor, 0 would clear the screen from the cursor to the end)
-    write(STDOUT_FILENO, "\x1b[2j", 4);
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    bufferAppend(&ab, "\x1b[2j", 4);
+    bufferAppend(&ab, "\x1b[H", 3);
 
-    editorDrawRows();
+    editorDrawRows(&ab);
 
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    bufferAppend(&ab, "\x1b[H", 3);
+
+    write(STDOUT_FILENO, ab.b, ab.len);
+    bufferFree(&ab);
 }
 
 /************ INPUT ************/
