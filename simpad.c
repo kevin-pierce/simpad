@@ -7,6 +7,7 @@
 #include <termios.h>
 #include <errno.h>
 #include <sys/ioctl.h>
+#include <string.h>
 
 /************ DEFINES ************/
 
@@ -18,6 +19,7 @@
 /************ DATA ************/
 
 struct editorConfig {
+    int cursorX, cursorY;
     int termRows;
     int termCols;
     struct termios orig_termios;
@@ -224,7 +226,11 @@ void editorRefreshScreen() {
     // This function can now use bufferAppend
     editorDrawRows(&ab);
 
-    bufferAppend(&ab, "\x1b[H", 3);
+    // Convert the text cursor position to 1-indexed values
+    char buf[32];
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cursorY + 1, E.cursorX + 1);
+    bufferAppend(&ab, buf, strlen(buf));
+
     bufferAppend(&ab, "\x1b[?25l", 6);
 
     write(STDOUT_FILENO, ab.b, ab.len);
@@ -232,6 +238,24 @@ void editorRefreshScreen() {
 }
 
 /************ INPUT ************/
+
+// Grant control of the mouse cursor using WASD (Will change to arrow keys later)
+void editorMoveCursor(char key) {
+    switch (key) {
+        case 'a':
+        E.cursorX--;
+        break;
+        case 'd':
+        E.cursorX++;
+        break;
+        case 'w':
+        E.cursorY--;
+        break;
+        case 's':
+        E.cursorY++;
+        break;
+    }
+}
 
 // Waits for a keypress, then handles it
 char editorProcessKeypress() {
@@ -243,7 +267,16 @@ char editorProcessKeypress() {
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
             break;
+
+        case 'w':
+        case 's':
+        case 'a':
+        case 'd':
+        editorMoveCursor(c);
+        break;
     }
+
+    
 }
 
 /************ INIT ************/
@@ -252,6 +285,11 @@ char editorProcessKeypress() {
     Initialize all the fields in the E struct
 */
 void initEditor() {
+
+    // Coordinates of the cursor in rows and columns
+    E.cursorX = 0;
+    E.cursorY = 0;
+
     if (getWindowSize(&E.termRows, &E.termCols) == -1) {
         die("getWindowSize");
     }
