@@ -16,6 +16,17 @@
 
 #define SIMPAD_VERSION "0.0.1"
 
+// Replace each instance of the wasd characters with a constant representing the arrow keys
+// Add detection for special keypresses that utilize escape sequences
+enum editorKey {
+    ARROW_LEFT = 1000,
+    ARROW_RIGHT,
+    ARROW_UP,
+    ARROW_DOWN,
+    PAGE_UP,
+    PAGE_DOWN
+};
+
 /************ DATA ************/
 
 struct editorConfig {
@@ -80,7 +91,7 @@ void enableRawMode() {
 }
 
 // Wait for one keypress, and return it
-char editorReadKey() {
+int editorReadKey() {
     int nread;
     char c;
 
@@ -89,7 +100,47 @@ char editorReadKey() {
             die("read");
         }
     }
-    return c;
+    
+    if (c == '\x1b') {
+        char seq[3];
+
+        // If we read an escapse seuqnce character ([) then we immedaitely read the next two bytes
+        if (read(STDIN_FILENO, &seq[0], 1) != 1) {
+            return '\x1b';
+        }
+        if (read(STDIN_FILENO, &seq[1], 1) != 1) {
+            return '\x1b';
+        }
+
+        
+        if (seq[0] == '[') {
+
+            if (seq[1] >= '0' && seq[1] <= '9' ){
+                if (read(STDIN_FILENO, &seq[2], 1) != 1) {
+                    return '\x1b';
+                }
+                if (seq[2] == '~') {
+                    switch (seq[1]) {
+                        case '5': return PAGE_UP;
+                        case '6': return PAGE_DOWN;
+                    }
+                }
+            }
+            else {
+                switch (seq[1]) {
+                    case 'A': return ARROW_UP;
+                    case 'B': return ARROW_DOWN;
+                    case 'C': return ARROW_RIGHT;
+                    case 'D': return ARROW_LEFT;
+                }  
+            }     
+        }
+
+        return '\x1b';
+    }
+    else {
+        return c;
+    }
 }
 
 int getCursorPosition(int *rows, int *cols) {
@@ -240,26 +291,27 @@ void editorRefreshScreen() {
 /************ INPUT ************/
 
 // Grant control of the mouse cursor using WASD (Will change to arrow keys later)
-void editorMoveCursor(char key) {
+// Establish bounds that prevent the cursor from moving off the screen
+void editorMoveCursor(int key) {
     switch (key) {
-        case 'a':
-        E.cursorX--;
-        break;
-        case 'd':
-        E.cursorX++;
-        break;
-        case 'w':
-        E.cursorY--;
-        break;
-        case 's':
-        E.cursorY++;
-        break;
+        case ARROW_LEFT:
+            if (E.cursorX != 0) E.cursorX--;
+            break;
+        case ARROW_RIGHT:
+            if (E.cursorX != E.termCols - 1) E.cursorX++;
+            break;
+        case ARROW_UP:
+            if (E.cursorY != 0) E.cursorY--;
+            break;
+        case ARROW_DOWN:
+            if (E.cursorY != E.termRows - 1) E.cursorY++;
+            break;
     }
 }
 
 // Waits for a keypress, then handles it
-char editorProcessKeypress() {
-    char c = editorReadKey();
+void editorProcessKeypress() {
+    int c = editorReadKey();
 
     switch (c) {
         case CTRL_KEY('q'):
@@ -268,12 +320,24 @@ char editorProcessKeypress() {
             exit(0);
             break;
 
-        case 'w':
-        case 's':
-        case 'a':
-        case 'd':
-        editorMoveCursor(c);
-        break;
+        // Simulate the function of a page_up / page_down function by sending the cursor
+        // to the top or bottom of our terminal window
+        case PAGE_UP:
+        case PAGE_DOWN:
+            {
+                int times = E.termRows;
+                while (times--) {
+                    editorMoveCursor(c == PAGE_UP ? ARROW_UP: ARROW_DOWN);
+                }
+            }
+            break;
+
+        case ARROW_UP:
+        case ARROW_DOWN:
+        case ARROW_LEFT:
+        case ARROW_RIGHT:
+            editorMoveCursor(c);
+            break;
     }
 
     
