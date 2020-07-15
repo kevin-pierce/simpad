@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <sys/ioctl.h>
 #include <string.h>
+#include <sys/types.h>
 
 /************ DEFINES ************/
 
@@ -32,10 +33,17 @@ enum editorKey {
 
 /************ DATA ************/
 
+typedef struct editorRow {
+    int size;
+    char *chars;
+} editorRow;
+
 struct editorConfig {
     int cursorX, cursorY;
     int termRows;
     int termCols;
+    int numRows;
+    editorRow row;
     struct termios orig_termios;
 };
 
@@ -214,6 +222,19 @@ int getWindowSize(int *rows, int *cols) {
     }
 }
 
+/************ FILE INPUT/OUTPUT ************/
+
+void editorOpen() {
+    char *line = "Hello World!";
+    ssize_t linelen = 13;
+
+    E.row.size = linelen;
+    E.row.chars = malloc(linelen + 1);
+    memcpy(E.row.chars, line, linelen);
+    E.row.chars[linelen] = '\0';
+    E.numRows = 1;
+}
+
 /************ APPEND BUFFER ************/
 
 struct abuf {
@@ -247,29 +268,38 @@ void bufferFree(struct abuf *ab){
 void editorDrawRows(struct abuf *ab) {
     int x;
     for (x=0; x<E.termRows; x++){
-        if (x == E.termRows / 3) {
+        if (x >= E.numRows) {
+            if (x == E.termRows / 3) {
 
-            // Define variable for welcome message
-            char welcomeMsg[80];
+                // Define variable for welcome message
+                char welcomeMsg[80];
 
-            int welcomeLen = snprintf(welcomeMsg, sizeof(welcomeMsg), "Simpad Editor -- Version %s", SIMPAD_VERSION);
-            
-            if (welcomeLen > E.termCols) {
-                welcomeLen = E.termCols;
+                int welcomeLen = snprintf(welcomeMsg, sizeof(welcomeMsg), "Simpad Editor -- Version %s", SIMPAD_VERSION);
+                
+                if (welcomeLen > E.termCols) {
+                    welcomeLen = E.termCols;
+                }
+                // Centering the welcome message
+                int padding = (E.termCols - welcomeLen) / 2;
+                if (padding) {
+                    bufferAppend(ab, "~", 1);
+                    padding --;
+                }
+                while (padding--) {
+                    bufferAppend(ab, " ", 1);
+                }
+                bufferAppend(ab, welcomeMsg, welcomeLen);
             }
-            // Centering the welcome message
-            int padding = (E.termCols - welcomeLen) / 2;
-            if (padding) {
+            else {
                 bufferAppend(ab, "~", 1);
-                padding --;
             }
-            while (padding--) {
-                bufferAppend(ab, " ", 1);
-            }
-            bufferAppend(ab, welcomeMsg, welcomeLen);
         }
         else {
-            bufferAppend(ab, "~", 1);
+            int len = E.row.size;
+            if (len > E.termCols) {
+                len = E.termCols;
+            }
+            bufferAppend(ab, E.row.chars, len);
         }
 
         bufferAppend(ab, "\x1b[K", 3);
@@ -382,6 +412,7 @@ void initEditor() {
     // Coordinates of the cursor in rows and columns
     E.cursorX = 0;
     E.cursorY = 0;
+    E.numRows = 0;
 
     if (getWindowSize(&E.termRows, &E.termCols) == -1) {
         die("getWindowSize");
@@ -391,6 +422,7 @@ void initEditor() {
 int main() {
     enableRawMode();
     initEditor();
+    editorOpen();
 
     while (1) {
         editorRefreshScreen();
