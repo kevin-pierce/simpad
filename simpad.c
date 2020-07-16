@@ -1,5 +1,10 @@
 /************ INCLUDES ************/
 
+// Define feature test macros to decide what features to expose
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -224,15 +229,32 @@ int getWindowSize(int *rows, int *cols) {
 
 /************ FILE INPUT/OUTPUT ************/
 
-void editorOpen() {
-    char *line = "Hello World!";
-    ssize_t linelen = 13;
+// Responsible for opening and reading a file 
+void editorOpen(char *fileName) {
+    FILE *filePointer = fopen(fileName, "r");
+    if (!filePointer) {
+        die("fopen");
+    }
+    
+    char *line = NULL;
+    size_t lineCap = 0;
+    ssize_t lineLength;
 
-    E.row.size = linelen;
-    E.row.chars = malloc(linelen + 1);
-    memcpy(E.row.chars, line, linelen);
-    E.row.chars[linelen] = '\0';
-    E.numRows = 1;
+    // Obtain the line content and length from getLine()
+    lineLength = getline(&line, lineCap, filePointer);
+    if (lineLength != -1) {
+        while (lineLength > 0 && (line[lineLength - 1] == '\n' || 
+                                  line[lineLength - 1] == '\r')) {
+            lineLength--;
+                                  }
+        E.row.size = lineLength;
+        E.row.chars = malloc(lineLength + 1);
+        memcpy(E.row.chars, line, lineLength);
+        E.row.chars[lineLength] = '\0';
+        E.numRows = 1;
+    }
+    free(line);
+    fclose(filePointer);
 }
 
 /************ APPEND BUFFER ************/
@@ -295,6 +317,8 @@ void editorDrawRows(struct abuf *ab) {
             }
         }
         else {
+
+            // Check if we are drawing a row that is part of the text buffer, or a row that comes after the text buffer
             int len = E.row.size;
             if (len > E.termCols) {
                 len = E.termCols;
@@ -419,10 +443,12 @@ void initEditor() {
     }
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     enableRawMode();
     initEditor();
-    editorOpen();
+    if (argc >= 2) {
+        editorOpen(argv[1]);
+    }
 
     while (1) {
         editorRefreshScreen();
