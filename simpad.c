@@ -48,7 +48,7 @@ struct editorConfig {
     int termRows;
     int termCols;
     int numRows;
-    editorRow row;
+    editorRow *row;
     struct termios orig_termios;
 };
 
@@ -229,29 +229,34 @@ int getWindowSize(int *rows, int *cols) {
 
 /************ FILE INPUT/OUTPUT ************/
 
+void editorAppendRow(char *s, size_t len) {
+    // Multiply num of bytes each row occupies by the number of rows we want
+    E.row = realloc(E.row, sizeof(editorRow) * (E.numRows + 1));
+
+    int at = E.numRows;
+    E.row[at].size = len;
+    E.row[at].chars = malloc(len + 1);
+    memcpy(E.row[at].chars, s, len);
+    E.row[at].chars[len] = '\0';
+    E.numRows++;
+}
+
 // Responsible for opening and reading a file 
 void editorOpen(char *fileName) {
     FILE *filePointer = fopen(fileName, "r");
     if (!filePointer) {
         die("fopen");
     }
-    
     char *line = NULL;
     size_t lineCap = 0;
     ssize_t lineLength;
 
-    // Obtain the line content and length from getLine()
-    lineLength = getline(&line, lineCap, filePointer);
-    if (lineLength != -1) {
+    while ((lineLength = getline(&line, &lineCap, filePointer)) != -1){
         while (lineLength > 0 && (line[lineLength - 1] == '\n' || 
                                   line[lineLength - 1] == '\r')) {
             lineLength--;
-                                  }
-        E.row.size = lineLength;
-        E.row.chars = malloc(lineLength + 1);
-        memcpy(E.row.chars, line, lineLength);
-        E.row.chars[lineLength] = '\0';
-        E.numRows = 1;
+        }
+        editorAppendRow(line, lineLength)
     }
     free(line);
     fclose(filePointer);
@@ -291,8 +296,8 @@ void editorDrawRows(struct abuf *ab) {
     int x;
     for (x=0; x<E.termRows; x++){
         if (x >= E.numRows) {
-            if (x == E.termRows / 3) {
-
+            // The welcome message will only display if our text buffer is empty
+            if (E.numRows == 0 && x == E.termRows / 3) {
                 // Define variable for welcome message
                 char welcomeMsg[80];
 
@@ -319,11 +324,11 @@ void editorDrawRows(struct abuf *ab) {
         else {
 
             // Check if we are drawing a row that is part of the text buffer, or a row that comes after the text buffer
-            int len = E.row.size;
+            int len = E.row[x].size;
             if (len > E.termCols) {
                 len = E.termCols;
             }
-            bufferAppend(ab, E.row.chars, len);
+            bufferAppend(ab, E.row[x].chars, len);
         }
 
         bufferAppend(ab, "\x1b[K", 3);
@@ -437,6 +442,7 @@ void initEditor() {
     E.cursorX = 0;
     E.cursorY = 0;
     E.numRows = 0;
+    E.row = NULL;
 
     if (getWindowSize(&E.termRows, &E.termCols) == -1) {
         die("getWindowSize");
