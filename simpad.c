@@ -46,6 +46,7 @@ typedef struct editorRow {
 struct editorConfig {
     int cursorX, cursorY;
     int rowOffset; 
+    int colOffset;
     int termRows;
     int termCols;
     int numRows;
@@ -247,7 +248,7 @@ void editorOpen(char *fileName) {
                                   line[lineLength - 1] == '\r')) {
             lineLength--;
         }
-        editorAppendRow(line, lineLength)
+        editorAppendRow(line, lineLength);
     }
     free(line);
     fclose(filePointer);
@@ -293,6 +294,14 @@ void editorScroll() {
     if (E.cursorY >= E.rowOffset + E.termRows) {
         E.rowOffset = E.cursorY - E.termRows + 1;
     }
+    // Left side of the screen
+    if (E.cursorX < E.colOffset){
+        E.colOffset = E.cursorX;
+    }
+    // Right side of the screen
+    if (E.cursorX >= E.colOffset + E.termCols){
+        E.colOffset = E.cursorX - E.termCols + 1;
+    }
 }
 
 void editorDrawRows(struct abuf *ab) {
@@ -326,11 +335,14 @@ void editorDrawRows(struct abuf *ab) {
         }
         else {
             // Check if we are drawing a row that is part of the text buffer, or a row that comes after the text buffer
-            int len = E.row[fileRow].size;
+            int len = E.row[fileRow].size - E.colOffset;
+            if (len < 0) {
+                len = 0;
+            }
             if (len > E.termCols) {
                 len = E.termCols;
             }
-            bufferAppend(ab, E.row[fileRow].chars, len);
+            bufferAppend(ab, &E.row[fileRow].chars[E.colOffset], len);
         }
 
         bufferAppend(ab, "\x1b[K", 3);
@@ -359,7 +371,7 @@ void editorRefreshScreen() {
 
     // Convert the text cursor position to 1-indexed values
     char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cursorY + 1, E.cursorX + 1);
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cursorY - E.rowOffset) + 1, (E.cursorX - E.colOffset) + 1);
     bufferAppend(&ab, buf, strlen(buf));
 
     bufferAppend(&ab, "\x1b[?25l", 6);
@@ -378,7 +390,6 @@ void editorMoveCursor(int key) {
             if (E.cursorX != 0) E.cursorX--;
             break;
         case ARROW_RIGHT:
-            if (E.cursorX != E.termCols - 1) E.cursorX++;
             break;
         case ARROW_UP:
             if (E.cursorY != 0) E.cursorY--;
@@ -442,6 +453,7 @@ void initEditor() {
     E.cursorX = 0;
     E.cursorY = 0;
     E.rowOffset = 0; // Scroll to top of file by default
+    E.colOffset = 0;
     E.numRows = 0;
     E.row = NULL;
 
