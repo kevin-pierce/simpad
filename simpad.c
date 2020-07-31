@@ -286,6 +286,26 @@ void editorAppendRow(char *s, size_t len) {
     E.numRows++;
 }
 
+void editorRowInsertCharacter(editorRow *row, int at, int character) {
+    if (at < 0 || at > row->size) at = row->size;
+    row->chars = realloc(row->chars, row->size + 2);
+    memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+    row->size++;
+    row->chars[at] = character;
+
+    editorUpdateRow(row);
+}
+
+/************ EDITOR OPERATIONS ************/
+
+void editorInsertCharacter(int c) {
+    if (E.cursorY == E.numRows) {
+        editorAppendRow("", 0);
+    }
+    editorRowInsertCharacter(&E.row[E.cursorY], E.cursorX, c);
+    E.cursorX++;
+}
+
 /************ FILE INPUT/OUTPUT ************/
 
 // Responsible for opening and reading a file 
@@ -575,6 +595,11 @@ void editorProcessKeypress() {
         case ARROW_RIGHT:
             editorMoveCursor(c);
             break;
+
+        // The default case will allow any keypress not mapped to some function to be inserted into the text
+        default:
+        editorInsertCharacter(c);
+        break;
     }
 }
 
