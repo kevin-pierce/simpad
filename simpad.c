@@ -45,6 +45,7 @@ typedef struct editorRow {
 
 struct editorConfig {
     int cursorX, cursorY;
+    int rowOffset; 
     int termRows;
     int termCols;
     int numRows;
@@ -60,7 +61,6 @@ struct editorConfig E;
     This void function is responsible for exiting the program with an error
 */
 void die(const char *s) {
-
     // Reposition cursor at the top left corner 
     write(STDOUT_FILENO, "\x1b[2J", 4);
     write(STDOUT_FILENO, "\x1b[H", 3);
@@ -82,18 +82,15 @@ void enableRawMode() {
     if (tcgetattr(STDIN_FILENO, &E.orig_termios) == -1) {
         die("tcgetattr");
     }
-
     // When program exits, disable raw mode
     atexit(disableRawMode);
-
     struct termios raw = E.orig_termios;
 
     // Disable various control characters (CTRL-C, CTRL-O, CTRL-S, CTRL-V, CTRL-Y)
     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
-    raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
-    raw.c_cflag |=(CS8);
-    // Disable newline defaulting to the front of the line
     raw.c_oflag &= ~(OPOST);
+    raw.c_cflag |=(CS8);
+    raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
 
     // Set a timeout so that read() will return if it doesn't obtain any output
     // The minimum number of bytes that need to be input here are 0
@@ -127,18 +124,15 @@ int editorReadKey() {
         if (read(STDIN_FILENO, &seq[1], 1) != 1) {
             return '\x1b';
         }
-
-        
+   
         if (seq[0] == '[') {
-
-            if (seq[1] >= '0' && seq[1] <= '9' ){
+            if (seq[1] >= '0' && seq[1] <= '9'){
                 if (read(STDIN_FILENO, &seq[2], 1) != 1) {
                     return '\x1b';
                 }
                 if (seq[2] == '~') {
                     switch (seq[1]) {
                         case '1': return HOME_KEY;
-
                         // Fn + Backspace to simulate the del key
                         case '3': return DEL_KEY;
                         case '4': return END_KEY;
@@ -160,14 +154,12 @@ int editorReadKey() {
                 }  
             }     
         }
-
         else if (seq[0] == 'O') {
             switch (seq[1]) {
                 case 'H': return HOME_KEY;
                 case 'F': return END_KEY;
             }
         }
-
         return '\x1b';
     }
     else {
@@ -192,7 +184,6 @@ int getCursorPosition(int *rows, int *cols) {
         }
         i++;
     }
-
     buf[i] = '\0';
 
     // Ensure we receive escape sequence characters (occupying first and second characters of the buffer)
@@ -204,7 +195,6 @@ int getCursorPosition(int *rows, int *cols) {
     if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) {
         return -1;
     }
-
     return 0;
 }
 
@@ -212,7 +202,6 @@ int getWindowSize(int *rows, int *cols) {
     struct winsize windowSize;
 
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &windowSize) == -1 || (windowSize.ws_col == 0)) {
-
         // These two escape sequences ensure that the cursor reaches the bottom of the terminal
         // C moves the cursor to the very right, and B moves the cursor to the bottom (C and B are capped to the edge of the terminal)
         if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) {
@@ -227,7 +216,7 @@ int getWindowSize(int *rows, int *cols) {
     }
 }
 
-/************ FILE INPUT/OUTPUT ************/
+/************ ROW OPERATIONS ************/
 
 void editorAppendRow(char *s, size_t len) {
     // Multiply num of bytes each row occupies by the number of rows we want
@@ -240,6 +229,8 @@ void editorAppendRow(char *s, size_t len) {
     E.row[at].chars[len] = '\0';
     E.numRows++;
 }
+
+/************ FILE INPUT/OUTPUT ************/
 
 // Responsible for opening and reading a file 
 void editorOpen(char *fileName) {
@@ -274,13 +265,13 @@ struct abuf {
 
 void bufferAppend(struct abuf *ab, const char *s, int len) {
     // Create a block of memory that is the size of our current string + the size of the string we are appending
-    char *newChar = realloc(ab -> b, ab -> len + len);
+    char *newChar = realloc(ab->b, ab->len + len);
 
     if (newChar == NULL) {
         return;
     }
     // Copy the string after the current data stored in our buffer, and update the pointer and length value of buffer
-    memcpy(&newChar[ab -> len], s, len);
+    memcpy(&newChar[ab->len], s, len);
     ab -> b = newChar;
     ab -> len += len;
 }
@@ -292,15 +283,27 @@ void bufferFree(struct abuf *ab){
 /************ OUTPUT ************/
 /* Draw the row starts (~) along the left side of the terminal, and displays a welcome message upon startup
 */
+
+void editorScroll() {
+    // Above the visible window?
+    if (E.cursorY < E.rowOffset){
+        E.rowOffset = E.cursorY;
+    }
+    // Past the bottom of the visible window?
+    if (E.cursorY >= E.rowOffset + E.termRows) {
+        E.rowOffset = E.cursorY - E.termRows + 1;
+    }
+}
+
 void editorDrawRows(struct abuf *ab) {
     int x;
     for (x=0; x<E.termRows; x++){
-        if (x >= E.numRows) {
+        int fileRow = x + E.rowOffset;
+        if (fileRow >= E.numRows) {
             // The welcome message will only display if our text buffer is empty
             if (E.numRows == 0 && x == E.termRows / 3) {
                 // Define variable for welcome message
                 char welcomeMsg[80];
-
                 int welcomeLen = snprintf(welcomeMsg, sizeof(welcomeMsg), "Simpad Editor -- Version %s", SIMPAD_VERSION);
                 
                 if (welcomeLen > E.termCols) {
@@ -322,13 +325,12 @@ void editorDrawRows(struct abuf *ab) {
             }
         }
         else {
-
             // Check if we are drawing a row that is part of the text buffer, or a row that comes after the text buffer
-            int len = E.row[x].size;
+            int len = E.row[fileRow].size;
             if (len > E.termCols) {
                 len = E.termCols;
             }
-            bufferAppend(ab, E.row[x].chars, len);
+            bufferAppend(ab, E.row[fileRow].chars, len);
         }
 
         bufferAppend(ab, "\x1b[K", 3);
@@ -340,7 +342,7 @@ void editorDrawRows(struct abuf *ab) {
 }
 
 void editorRefreshScreen() {
-
+    editorScroll();
     // Initialize new buffer
     struct abuf ab = ABUF_INIT;
 
@@ -382,7 +384,7 @@ void editorMoveCursor(int key) {
             if (E.cursorY != 0) E.cursorY--;
             break;
         case ARROW_DOWN:
-            if (E.cursorY != E.termRows - 1) E.cursorY++;
+            if (E.cursorY < E.numRows) E.cursorY++;
             break;
     }
 }
@@ -393,7 +395,7 @@ void editorProcessKeypress() {
 
     switch (c) {
         case CTRL_KEY('q'):
-            write(STDOUT_FILENO, "\x1b[2j", 4);
+            write(STDOUT_FILENO, "\x1b[2J", 4);
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
             break;
@@ -427,8 +429,6 @@ void editorProcessKeypress() {
             editorMoveCursor(c);
             break;
     }
-
-    
 }
 
 /************ INIT ************/
@@ -441,6 +441,7 @@ void initEditor() {
     // Coordinates of the cursor in rows and columns
     E.cursorX = 0;
     E.cursorY = 0;
+    E.rowOffset = 0; // Scroll to top of file by default
     E.numRows = 0;
     E.row = NULL;
 
