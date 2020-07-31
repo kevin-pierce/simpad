@@ -19,8 +19,8 @@
 
 // This expression uses the bitwise AND to strip away the first 3 numbers (0x1f == 00011111)
 #define CTRL_KEY(k) ((k) & 0x1f)
-
 #define SIMPAD_VERSION "0.0.1"
+#define SIMPAD_TAB_STOP 8
 
 // Replace each instance of the wasd characters with a constant representing the arrow keys
 // Add detection for special keypresses that utilize escape sequences
@@ -40,7 +40,9 @@ enum editorKey {
 
 typedef struct editorRow {
     int size;
+    int renderSize;
     char *chars;
+    char *render; // We can now control how to render tabs
 } editorRow;
 
 struct editorConfig {
@@ -219,6 +221,35 @@ int getWindowSize(int *rows, int *cols) {
 
 /************ ROW OPERATIONS ************/
 
+// Reads the characters from an editorRow to fill the contents of a 
+// rendered row (The one to ACTUALLY be displayed)
+void editorUpdateRow(editorRow *row){
+    int tabs = 0;
+    int i;
+
+    for (i = 0; i < row->size; i++) {
+        if (row->chars[i] == '\t') tabs++;
+    }
+    free(row->render);
+    row->render = malloc(row->size + tabs*(SIMPAD_TAB_STOP - 1) + 1);
+
+    // Render tabs as multiple spaces
+    int index = 0;
+    for (i = 0; i < row->size; i++){
+        if (row->chars[i] == '\t'){
+            row->render[index++] = ' ';
+            while(index % SIMPAD_TAB_STOP != 0) {
+                row->render[index++] = ' ';
+            }
+        } else {
+            row->render[index++] = row->chars[i];
+        } 
+    }
+    // Index now contains the number of chars copied into row->render
+    row->render[index] = '\0';
+    row->renderSize = index;
+}
+
 void editorAppendRow(char *s, size_t len) {
     // Multiply num of bytes each row occupies by the number of rows we want
     E.row = realloc(E.row, sizeof(editorRow) * (E.numRows + 1));
@@ -228,6 +259,11 @@ void editorAppendRow(char *s, size_t len) {
     E.row[at].chars = malloc(len + 1);
     memcpy(E.row[at].chars, s, len);
     E.row[at].chars[len] = '\0';
+
+    E.row[at].renderSize = 0;
+    E.row[at].render = NULL;
+    editorUpdateRow(&E.row[at]);
+
     E.numRows++;
 }
 
@@ -335,14 +371,14 @@ void editorDrawRows(struct abuf *ab) {
         }
         else {
             // Check if we are drawing a row that is part of the text buffer, or a row that comes after the text buffer
-            int len = E.row[fileRow].size - E.colOffset;
+            int len = E.row[fileRow].renderSize - E.colOffset;
             if (len < 0) {
                 len = 0;
             }
             if (len > E.termCols) {
                 len = E.termCols;
             }
-            bufferAppend(ab, &E.row[fileRow].chars[E.colOffset], len);
+            bufferAppend(ab, &E.row[fileRow].render[E.colOffset], len);
         }
 
         bufferAppend(ab, "\x1b[K", 3);
@@ -385,11 +421,24 @@ void editorRefreshScreen() {
 // Grant control of the mouse cursor using WASD (Will change to arrow keys later)
 // Establish bounds that prevent the cursor from moving off the screen
 void editorMoveCursor(int key) {
+    editorRow *row = (E.cursorY >= E.numRows) ? NULL : &E.row[E.cursorY];
+
     switch (key) {
         case ARROW_LEFT:
-            if (E.cursorX != 0) E.cursorX--;
+            if (E.cursorX != 0) {
+                E.cursorX--;
+            } else if (E.cursorY > 0) {
+                E.cursorY--;
+                E.cursorX = E.row[E.cursorY].size;
+            }
             break;
         case ARROW_RIGHT:
+            if (row && E.cursorX < row->size) {
+                E.cursorX++;
+            } else if (row && E.cursorX == row -> size){
+                E.cursorY++;
+                E.cursorX = 0;
+            }
             break;
         case ARROW_UP:
             if (E.cursorY != 0) E.cursorY--;
@@ -397,6 +446,12 @@ void editorMoveCursor(int key) {
         case ARROW_DOWN:
             if (E.cursorY < E.numRows) E.cursorY++;
             break;
+    }
+    // If at the last position in a line, snap to the end of the next line if we change rows
+    row = (E.cursorY >= E.numRows) ? NULL : &E.row[E.cursorY];
+    int rowLength = row ? row->size : 0;
+    if (E.cursorX > rowLength){
+        E.cursorX = rowLength;
     }
 }
 
