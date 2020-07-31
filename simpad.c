@@ -8,11 +8,13 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <termios.h>
 #include <errno.h>
 #include <sys/ioctl.h>
 #include <string.h>
+#include <time.h>
 #include <sys/types.h>
 
 /************ DEFINES ************/
@@ -47,12 +49,16 @@ typedef struct editorRow {
 
 struct editorConfig {
     int cursorX, cursorY;
+    int renderX; // Horizontal coordinate variable (some characters do not only occupy one column space)
     int rowOffset; 
     int colOffset;
     int termRows;
     int termCols;
     int numRows;
     editorRow *row;
+    char *fileName;
+    char statusMsg[80];
+    time_t statusMsg_time;
     struct termios orig_termios;
 };
 
@@ -221,6 +227,19 @@ int getWindowSize(int *rows, int *cols) {
 
 /************ ROW OPERATIONS ************/
 
+// Convert a chars index to a render index, and figure out how many spaces each tabbed space occupies
+int editorRowCursorXToRenderX(editorRow *row, int cursorX){
+    int renderX = 0;
+    int i;
+    for (i = 0; i < cursorX; i++){
+        if (row->chars[i] == '\t'){
+            renderX += (SIMPAD_TAB_STOP - 1) - (renderX % SIMPAD_TAB_STOP);
+        }
+        renderX++;
+    }
+    return renderX;
+}
+
 // Reads the characters from an editorRow to fill the contents of a 
 // rendered row (The one to ACTUALLY be displayed)
 void editorUpdateRow(editorRow *row){
@@ -271,6 +290,9 @@ void editorAppendRow(char *s, size_t len) {
 
 // Responsible for opening and reading a file 
 void editorOpen(char *fileName) {
+    free(E.fileName);
+    E.fileName = strdup(fileName);
+
     FILE *filePointer = fopen(fileName, "r");
     if (!filePointer) {
         die("fopen");
@@ -322,6 +344,11 @@ void bufferFree(struct abuf *ab){
 */
 
 void editorScroll() {
+    E.renderX = 0;
+    if (E.cursorY < E.numRows) {
+        E.renderX = editorRowCursorXToRenderX(&E.row[E.cursorY], E.cursorX);
+    }
+
     // Above the visible window?
     if (E.cursorY < E.rowOffset){
         E.rowOffset = E.cursorY;
@@ -331,12 +358,12 @@ void editorScroll() {
         E.rowOffset = E.cursorY - E.termRows + 1;
     }
     // Left side of the screen
-    if (E.cursorX < E.colOffset){
-        E.colOffset = E.cursorX;
+    if (E.renderX < E.colOffset){
+        E.colOffset = E.renderX;
     }
     // Right side of the screen
-    if (E.cursorX >= E.colOffset + E.termCols){
-        E.colOffset = E.cursorX - E.termCols + 1;
+    if (E.renderX >= E.colOffset + E.termCols){
+        E.colOffset = E.renderX - E.termCols + 1;
     }
 }
 
@@ -382,11 +409,32 @@ void editorDrawRows(struct abuf *ab) {
         }
 
         bufferAppend(ab, "\x1b[K", 3);
-        // Ensure a ~ is placed on the last line
-        if (x < E.termRows - 1){
-            bufferAppend(ab, "\r\n", 2);
+        bufferAppend(ab, "\r\n", 2);
+    }
+}
+// Create our status bar that displays file name, type, and num of lines
+void editorDrawStatusBar(struct abuf *ab){
+    bufferAppend(ab, "\x1b[7m", 4);
+    char status[80], renderStatus[80];
+    int len = snprintf(status, sizeof(status), "%.20s - %d lines", E.fileName ? E.fileName : "[No Name]", E.numRows);
+    int renderLen = snprintf(renderStatus, sizeof(renderStatus), "%d/%d", E.cursorY + 1, E.numRows); // Current line number
+    // If the status string is too long, cut it short
+    if (len > E.termCols) {
+        len = E.termCols;
+    }
+    bufferAppend(ab, status, len);
+    // Keep adding spaces until the second status message (the one displaying the current line number is at the very right-edge of the screen)
+    while (len < E.termCols) {
+        if (E.termCols - len == renderLen) {
+            bufferAppend(ab, renderStatus, renderLen);
+            break;
+        }
+        else {
+            bufferAppend(ab, " ", 1);
+        len++;
         }
     }
+    bufferAppend(ab, "\x1b[m", 3);
 }
 
 void editorRefreshScreen() {
@@ -404,16 +452,26 @@ void editorRefreshScreen() {
 
     // This function can now use bufferAppend
     editorDrawRows(&ab);
+    editorDrawStatusBar(&ab);
 
     // Convert the text cursor position to 1-indexed values
     char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cursorY - E.rowOffset) + 1, (E.cursorX - E.colOffset) + 1);
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cursorY - E.rowOffset) + 1, (E.renderX - E.colOffset) + 1);
     bufferAppend(&ab, buf, strlen(buf));
 
     bufferAppend(&ab, "\x1b[?25l", 6);
 
     write(STDOUT_FILENO, ab.b, ab.len);
     bufferFree(&ab);
+}
+
+// ... indicates that this is a variadic function (any num of arguments)
+void editorSetStatusMessage(const char *formatString, ...) {
+    va_list ap;
+    va_start(ap, formatString);
+    vsnprintf(E.statusMsg, sizeof(E.statusMsg), formatString, ap);
+    va_end(ap);
+    E.statusMsg_time = time(NULL);
 }
 
 /************ INPUT ************/
@@ -471,9 +529,11 @@ void editorProcessKeypress() {
             E.cursorX = 0;
             break;
 
-        // Use Fn + right arrow
+        // Use Fn + right arrow to bring cursor to end of line
         case END_KEY:
-            E.cursorX = E.termCols - 1;
+            if (E.cursorY < E.numRows) {
+                E.cursorX = E.row[E.cursorY].size;
+            }
             break;
 
         // Simulate the function of a page_up / page_down function by sending the cursor
@@ -481,6 +541,14 @@ void editorProcessKeypress() {
         case PAGE_UP:
         case PAGE_DOWN:
             {
+                if (c == PAGE_UP){
+                    E.cursorY = E.rowOffset;
+                } else if (c == PAGE_DOWN) {
+                    E.cursorY = E.rowOffset + E.termRows - 1;
+                    if (E.cursorY > E.termRows) {
+                        E.cursorY = E.numRows;
+                    }
+                }
                 int times = E.termRows;
                 while (times--) {
                     editorMoveCursor(c == PAGE_UP ? ARROW_UP: ARROW_DOWN);
@@ -507,14 +575,19 @@ void initEditor() {
     // Coordinates of the cursor in rows and columns
     E.cursorX = 0;
     E.cursorY = 0;
+    E.renderX = 0;
     E.rowOffset = 0; // Scroll to top of file by default
     E.colOffset = 0;
     E.numRows = 0;
     E.row = NULL;
+    E.fileName = NULL;
+    E.statusMsg[0] = '\0';
+    E.statusMsg_time = 0;
 
     if (getWindowSize(&E.termRows, &E.termCols) == -1) {
         die("getWindowSize");
     }
+    E.termRows -= 1; // Make space for a status bar
 }
 
 int main(int argc, char *argv[]) {
@@ -523,6 +596,8 @@ int main(int argc, char *argv[]) {
     if (argc >= 2) {
         editorOpen(argv[1]);
     }
+
+    editorSetStatusMessage("HELP: Ctrl-Q = quit");
 
     while (1) {
         editorRefreshScreen();
