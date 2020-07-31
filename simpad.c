@@ -435,6 +435,18 @@ void editorDrawStatusBar(struct abuf *ab){
         }
     }
     bufferAppend(ab, "\x1b[m", 3);
+    bufferAppend(ab, "\r\n", 2);
+}
+
+void editorDrawMessageBar(struct abuf *ab) {
+    bufferAppend(ab, "\x1b[K", 3);
+    int msgLen = strlen(E.statusMsg);
+    if (msgLen > E.termCols){
+        msgLen = E.termCols;
+    }
+    if (msgLen && time(NULL) - E.statusMsg_time < 5) {
+        bufferAppend(ab, E.statusMsg, msgLen);
+    }
 }
 
 void editorRefreshScreen() {
@@ -453,6 +465,7 @@ void editorRefreshScreen() {
     // This function can now use bufferAppend
     editorDrawRows(&ab);
     editorDrawStatusBar(&ab);
+    editorDrawMessageBar(&ab);
 
     // Convert the text cursor position to 1-indexed values
     char buf[32];
@@ -587,7 +600,7 @@ void initEditor() {
     if (getWindowSize(&E.termRows, &E.termCols) == -1) {
         die("getWindowSize");
     }
-    E.termRows -= 1; // Make space for a status bar
+    E.termRows -= 2; // Make space for a status bar + status message
 }
 
 int main(int argc, char *argv[]) {
