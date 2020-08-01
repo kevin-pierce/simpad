@@ -7,6 +7,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <unistd.h>
@@ -27,6 +28,7 @@
 // Replace each instance of the wasd characters with a constant representing the arrow keys
 // Add detection for special keypresses that utilize escape sequences
 enum editorKey {
+    BACKSPACE = 127,
     ARROW_LEFT = 1000,
     ARROW_RIGHT,
     ARROW_UP,
@@ -308,6 +310,28 @@ void editorInsertCharacter(int c) {
 
 /************ FILE INPUT/OUTPUT ************/
 
+char *editorRowsToString(int *bufferLen) {
+    int totalLen = 0;
+    int i;
+    // Add up the length of each row, so we know how much memory to allocate
+    for (i = 0; i < E.numRows; i++) {
+        totalLen += E.row[i].size + 1;
+    }
+    *bufferLen = totalLen;
+
+    char *buffer = malloc(totalLen);
+    char *p = buffer;
+
+    for (i = 0; i < E.numRows; i++){
+        memcpy(p, E.row[i].chars, E.row[i].size);
+        p += E.row[i].size;
+        *p = '\n';
+        p++;
+    }
+
+    return buffer;
+}
+
 // Responsible for opening and reading a file 
 void editorOpen(char *fileName) {
     free(E.fileName);
@@ -330,6 +354,20 @@ void editorOpen(char *fileName) {
     }
     free(line);
     fclose(filePointer);
+}
+
+void editorSave() {
+    if (E.fileName == NULL) return; // New file (no filename)
+
+    int length;
+    char *buffer = editorRowsToString(&length);
+
+    // Create a new file and open it (O_CREAT) for reading and writing (O_RDRW) - 0644 is the permissions flag, giving the owner full permission over the file, while every other user can only read the file.
+    int newFile = open(E.fileName, O_RDWR | O_CREAT, 0644);
+    ftruncate(newFile, length);
+    write(newFile, buffer, length);
+    close(newFile);
+    free(buffer);
 }
 
 /************ APPEND BUFFER ************/
@@ -551,10 +589,17 @@ void editorProcessKeypress() {
     int c = editorReadKey();
 
     switch (c) {
+        case '\r':
+            break;
+        // command + q to quit
         case CTRL_KEY('q'):
             write(STDOUT_FILENO, "\x1b[2J", 4);
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
+            break;
+        // command + s to save
+        case CTRL_KEY('s'):
+            editorSave();
             break;
         
         // Use Fn + left arrow 
@@ -567,6 +612,11 @@ void editorProcessKeypress() {
             if (E.cursorY < E.numRows) {
                 E.cursorX = E.row[E.cursorY].size;
             }
+            break;
+        
+        case BACKSPACE:
+        case CTRL_KEY('h'):
+        case DEL_KEY:
             break;
 
         // Simulate the function of a page_up / page_down function by sending the cursor
@@ -596,10 +646,14 @@ void editorProcessKeypress() {
             editorMoveCursor(c);
             break;
 
+        case CTRL_KEY('l'):
+        case '\x1b':
+            break;
+
         // The default case will allow any keypress not mapped to some function to be inserted into the text
         default:
-        editorInsertCharacter(c);
-        break;
+            editorInsertCharacter(c);
+            break;
     }
 }
 
