@@ -73,6 +73,8 @@ struct editorConfig E;
 
 // This prototype allows us to call editorSetStatus before it is defined later in the file (due to C's single-pass compilation method)
 void editorSetStatusMessage(const char *formatString, ...);
+void editorRefreshScreen();
+char *editorPrompt(char *prompt);
 
 /************ TERMINAL ************/
 /*
@@ -437,7 +439,14 @@ void editorOpen(char *fileName) {
 }
 
 void editorSave() {
-    if (E.fileName == NULL) return; // New file (no filename)
+    // New file (no filename)
+    if (E.fileName == NULL) {
+        E.fileName = editorPrompt("Save as: %s (ESC to cancel)");
+        if (E.fileName == NULL){
+            editorSetStatusMessage("Save aborted!");
+            return;
+        }
+    } 
 
     int length;
     char *buffer = editorRowsToString(&length);
@@ -637,6 +646,49 @@ void editorSetStatusMessage(const char *formatString, ...) {
 }
 
 /************ INPUT ************/
+
+// Prompts the user to input a filename when saving a new file 
+char *editorPrompt(char *prompt) { 
+    size_t bufferSize = 128;
+    char *buffer = malloc(bufferSize);
+
+    size_t bufferLength = 0;
+    buffer[0] = '\0'; // User's inputted file name is stored in buffer
+
+    // Infinite loop that infinitely sets the status message and waits for a keypress
+    while (1){
+        editorSetStatusMessage(prompt, buffer);
+        editorRefreshScreen();
+
+        int c = editorReadKey();
+        
+        // User can delete / backspace characters while in the file name prompt
+        if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
+            if (bufferLength != 0) buffer[--bufferLength] = '\0';
+        }
+        // Allow the user to hit esc to cancel the save-file function
+        else if (c == '\x1b'){
+            editorSetStatusMessage("");
+            free(buffer);
+            return NULL;
+        }
+        else if (c == '\r'){
+            if (bufferLength != 0) {
+                editorSetStatusMessage("");
+                return buffer;
+            }
+
+        // Ensure an inputted key is in the range of a char (a valid letter / number)
+        } else if (!iscntrl(c) && c < 128){
+            if (bufferLength == bufferSize - 1) {
+                bufferSize *= 2;
+                buffer = realloc(buffer, bufferSize);
+            }
+            buffer[bufferLength++] = c;
+            buffer[bufferLength] = '\0';
+        }
+    }
+}
 
 // Grant control of the mouse cursor using WASD (Will change to arrow keys later)
 // Establish bounds that prevent the cursor from moving off the screen
