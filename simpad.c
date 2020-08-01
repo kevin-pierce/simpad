@@ -24,6 +24,7 @@
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define SIMPAD_VERSION "0.0.1"
 #define SIMPAD_TAB_STOP 8
+#define SIMPAD_QUIT_TIMES 1
 
 // Replace each instance of the wasd characters with a constant representing the arrow keys
 // Add detection for special keypresses that utilize escape sequences
@@ -58,6 +59,7 @@ struct editorConfig {
     int termCols;
     int numRows;
     editorRow *row;
+    int changed;
     char *fileName;
     char statusMsg[80];
     time_t statusMsg_time;
@@ -66,6 +68,11 @@ struct editorConfig {
 
 // Declare E of type editorConfig
 struct editorConfig E;
+
+/************ FUNCTION PROTOTYPES ************/
+
+// This prototype allows us to call editorSetStatus before it is defined later in the file (due to C's single-pass compilation method)
+void editorSetStatusMessage(const char *formatString, ...);
 
 /************ TERMINAL ************/
 /*
@@ -286,6 +293,7 @@ void editorAppendRow(char *s, size_t len) {
     editorUpdateRow(&E.row[at]);
 
     E.numRows++;
+    E.changed++;
 }
 
 void editorRowInsertCharacter(editorRow *row, int at, int character) {
@@ -296,6 +304,7 @@ void editorRowInsertCharacter(editorRow *row, int at, int character) {
     row->chars[at] = character;
 
     editorUpdateRow(row);
+    E.changed++;
 }
 
 /************ EDITOR OPERATIONS ************/
@@ -354,6 +363,7 @@ void editorOpen(char *fileName) {
     }
     free(line);
     fclose(filePointer);
+    E.changed = 0;
 }
 
 void editorSave() {
@@ -364,10 +374,21 @@ void editorSave() {
 
     // Create a new file and open it (O_CREAT) for reading and writing (O_RDRW) - 0644 is the permissions flag, giving the owner full permission over the file, while every other user can only read the file.
     int newFile = open(E.fileName, O_RDWR | O_CREAT, 0644);
-    ftruncate(newFile, length);
-    write(newFile, buffer, length);
-    close(newFile);
+
+    if (newFile != -1){
+        if (ftruncate(newFile, length) != -1) {
+            if (write(newFile, buffer, length) == length) {
+                close(newFile);
+                free(buffer);
+                E.changed = 0;
+                editorSetStatusMessage("%d bytes written to disk", length); // Status bar will now display whether we succesfully saved or not
+                return;
+            }
+        }
+        close(newFile);
+    }
     free(buffer);
+    editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
 }
 
 /************ APPEND BUFFER ************/
@@ -474,7 +495,7 @@ void editorDrawRows(struct abuf *ab) {
 void editorDrawStatusBar(struct abuf *ab){
     bufferAppend(ab, "\x1b[7m", 4);
     char status[80], renderStatus[80];
-    int len = snprintf(status, sizeof(status), "%.20s - %d lines", E.fileName ? E.fileName : "[No Name]", E.numRows);
+    int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", E.fileName ? E.fileName : "[No Name]", E.numRows, E.changed ? "(modified)" : "");
     int renderLen = snprintf(renderStatus, sizeof(renderStatus), "%d/%d", E.cursorY + 1, E.numRows); // Current line number
     // If the status string is too long, cut it short
     if (len > E.termCols) {
@@ -586,6 +607,8 @@ void editorMoveCursor(int key) {
 
 // Waits for a keypress, then handles it
 void editorProcessKeypress() {
+    static int quit_times = SIMPAD_QUIT_TIMES;
+
     int c = editorReadKey();
 
     switch (c) {
@@ -593,6 +616,11 @@ void editorProcessKeypress() {
             break;
         // command + q to quit
         case CTRL_KEY('q'):
+            if (E.changed && quit_times > 0) {
+                editorSetStatusMessage("WARNING - File has unsaved changes. Press Ctrl-Q again to quit.");
+                quit_times--;
+                return;
+            }
             write(STDOUT_FILENO, "\x1b[2J", 4);
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
@@ -655,6 +683,7 @@ void editorProcessKeypress() {
             editorInsertCharacter(c);
             break;
     }
+    quit_times = SIMPAD_QUIT_TIMES; // Reset back to 2 if the user presses any other key
 }
 
 /************ INIT ************/
@@ -672,6 +701,7 @@ void initEditor() {
     E.colOffset = 0;
     E.numRows = 0;
     E.row = NULL;
+    E.changed = 0; // Flag that tells us if a file has been changed since its last save
     E.fileName = NULL;
     E.statusMsg[0] = '\0';
     E.statusMsg_time = 0;
@@ -689,7 +719,7 @@ int main(int argc, char *argv[]) {
         editorOpen(argv[1]);
     }
 
-    editorSetStatusMessage("HELP: Ctrl-Q = quit");
+    editorSetStatusMessage("HELP: Ctrl-Q = quit | Ctrl-S = save");
 
     while (1) {
         editorRefreshScreen();
