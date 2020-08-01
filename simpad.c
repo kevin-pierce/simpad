@@ -251,6 +251,20 @@ int editorRowCursorXToRenderX(editorRow *row, int cursorX){
     return renderX;
 }
 
+int editorRowRenderXToCursorX(editorRow *row, int renderX){
+    int cursorRenderX = 0;
+    int cursorX;
+    for (cursorX = 0; cursorX < row->size; cursorX++){
+        if (row->chars[cursorX] == '\t'){
+            cursorRenderX += (SIMPAD_TAB_STOP - 1) - (cursorRenderX % SIMPAD_TAB_STOP);
+        }
+        cursorRenderX++;
+
+        if (cursorRenderX > renderX) return cursorX;
+    }
+    return cursorX;
+}
+
 // Reads the characters from an editorRow to fill the contents of a 
 // rendered row (The one to ACTUALLY be displayed)
 void editorUpdateRow(editorRow *row){
@@ -468,6 +482,26 @@ void editorSave() {
     }
     free(buffer);
     editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
+}
+
+/************ SEARCH FEATURE ***********/
+
+void editorFind() {
+    char *query = editorPrompt("Search: %s (ESC to cancel)");
+    if (query == NULL) return; // Cancel if the user hits escape
+
+    int i;
+    for (i = 0; i < E.numRows; i++){
+        editorRow *row = &E.row[i];
+        char *match = strstr(row->render, query); // Returns a pointer matching the specified substring
+        if (match){
+            E.cursorY = i;
+            E.cursorX = editorRowRenderXToCursorX(row, match - row->render);
+            E.rowOffset = E.numRows;
+            break;
+        }
+    }
+    free(query);
 }
 
 /************ APPEND BUFFER ************/
@@ -764,6 +798,11 @@ void editorProcessKeypress() {
                 E.cursorX = E.row[E.cursorY].size;
             }
             break;
+
+        // Search in-text function
+        case CTRL_KEY('f'):
+            editorFind();
+            break;
         
         case BACKSPACE:
         case CTRL_KEY('h'):
@@ -844,7 +883,7 @@ int main(int argc, char *argv[]) {
         editorOpen(argv[1]);
     }
 
-    editorSetStatusMessage("HELP: Ctrl-Q = quit | Ctrl-S = save");
+    editorSetStatusMessage("HELP: Ctrl-Q = quit | Ctrl-S = save | Ctrl-F = find");
 
     while (1) {
         editorRefreshScreen();
