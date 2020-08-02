@@ -331,7 +331,7 @@ void editorRowInsertCharacter(editorRow *row, int at, int character) {
     if (at < 0 || at > row->size) at = row->size;
     row->chars = realloc(row->chars, row->size + 2);
     memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1); // Overwrite the deleted characters with the ones that come after
-    row->size--;
+    row->size++;
     row->chars[at] = character;
 
     editorUpdateRow(row);
@@ -487,15 +487,47 @@ void editorSave() {
 /************ SEARCH FEATURE ***********/
 
 void editorFindCallback(char *query, int key){
+
+    static int lastMatch = -1; // The prior search result (-1 if no result, or index of the last match row)
+    static int direction = 1;  // 1 = down, -1 = up
+
     if (key == '\r' || key == '\x1b'){ // User presses enter or escape, in which case they leave search mode
+        lastMatch = -1;
+        direction = 1;
         return;
     }
+    else if (key == ARROW_RIGHT || key == ARROW_DOWN){
+        direction = 1;
+    }
+    else if (key == ARROW_LEFT || key == ARROW_UP){
+        direction = -1;
+    }
+    else {
+        lastMatch = -1;
+        direction = 1;
+    }
+
+    if (lastMatch == -1) {
+        direction = 1;
+    }
+    int current = lastMatch; // Current is the index of the row we are searching 
     int i;
+
     for (i = 0; i < E.numRows; i++){
-        editorRow *row = &E.row[i];
-        char *match = strstr(row->render, query); // Returns a pointer matching the specified substring
+        current += direction;
+        if (current == -1){
+            current = E.numRows - 1;
+        }
+        else if (current == E.numRows){
+            current = 0;
+        }
+
+        editorRow *row = &E.row[current];
+        char *match = strstr(row->render, query);
+
         if (match){
-            E.cursorY = i;
+            lastMatch = current;
+            E.cursorY = current;
             E.cursorX = editorRowRenderXToCursorX(row, match - row->render);
             E.rowOffset = E.numRows;
             break;
@@ -504,10 +536,23 @@ void editorFindCallback(char *query, int key){
 }
 
 void editorFind() {
-    char *query = editorPrompt("Search: %s (ESC to cancel)", editorFindCallback);
+
+    int savedCursorX = E.cursorX;
+    int savedCursorY = E.cursorY;
+    int savedColOffset = E.colOffset;
+    int savedRowOffset = E.rowOffset;
+
+    char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)", editorFindCallback);
     if (query) {
         free(query);
     }    
+    // Restore original mouse position when search is cancelled
+    else {
+        E.cursorX = savedCursorX;
+        E.cursorY = savedCursorY;
+        E.colOffset = savedColOffset;
+        E.rowOffset = savedRowOffset;
+    }
 }
 
 /************ APPEND BUFFER ************/
