@@ -74,7 +74,7 @@ struct editorConfig E;
 // This prototype allows us to call editorSetStatus before it is defined later in the file (due to C's single-pass compilation method)
 void editorSetStatusMessage(const char *formatString, ...);
 void editorRefreshScreen();
-char *editorPrompt(char *prompt);
+char *editorPrompt(char *prompt, void (*callback)(char *, int));
 
 /************ TERMINAL ************/
 /*
@@ -455,7 +455,7 @@ void editorOpen(char *fileName) {
 void editorSave() {
     // New file (no filename)
     if (E.fileName == NULL) {
-        E.fileName = editorPrompt("Save as: %s (ESC to cancel)");
+        E.fileName = editorPrompt("Save as: %s (ESC to cancel)", NULL);
         if (E.fileName == NULL){
             editorSetStatusMessage("Save aborted!");
             return;
@@ -486,10 +486,10 @@ void editorSave() {
 
 /************ SEARCH FEATURE ***********/
 
-void editorFind() {
-    char *query = editorPrompt("Search: %s (ESC to cancel)");
-    if (query == NULL) return; // Cancel if the user hits escape
-
+void editorFindCallback(char *query, int key){
+    if (key == '\r' || key == '\x1b'){ // User presses enter or escape, in which case they leave search mode
+        return;
+    }
     int i;
     for (i = 0; i < E.numRows; i++){
         editorRow *row = &E.row[i];
@@ -501,7 +501,13 @@ void editorFind() {
             break;
         }
     }
-    free(query);
+}
+
+void editorFind() {
+    char *query = editorPrompt("Search: %s (ESC to cancel)", editorFindCallback);
+    if (query) {
+        free(query);
+    }    
 }
 
 /************ APPEND BUFFER ************/
@@ -682,7 +688,7 @@ void editorSetStatusMessage(const char *formatString, ...) {
 /************ INPUT ************/
 
 // Prompts the user to input a filename when saving a new file 
-char *editorPrompt(char *prompt) { 
+char *editorPrompt(char *prompt, void (*callback)(char *, int)) { 
     size_t bufferSize = 128;
     char *buffer = malloc(bufferSize);
 
@@ -703,12 +709,14 @@ char *editorPrompt(char *prompt) {
         // Allow the user to hit esc to cancel the save-file function
         else if (c == '\x1b'){
             editorSetStatusMessage("");
+            if (callback) callback(buffer, c);
             free(buffer);
             return NULL;
         }
         else if (c == '\r'){
             if (bufferLength != 0) {
                 editorSetStatusMessage("");
+                if (callback) callback(buffer, c);
                 return buffer;
             }
 
@@ -721,6 +729,7 @@ char *editorPrompt(char *prompt) {
             buffer[bufferLength++] = c;
             buffer[bufferLength] = '\0';
         }
+        if (callback) callback(buffer, c);
     }
 }
 
