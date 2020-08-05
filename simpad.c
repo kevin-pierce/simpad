@@ -246,14 +246,31 @@ int getWindowSize(int *rows, int *cols) {
 
 /************ SYNTAX HIGHLIGHTING ************/
 
+// A function that takes a character and returns true if it is considered a separator character
+int isSeparator(int c){
+    return isspace(c) || c == '\0' || strchr(",.()+-/*=~%<>[];", c) != NULL;
+}
+
 void editorUpdateSyntax(editorRow *row){
     row->highlight = realloc(row->highlight, row->renderSize);
     memset(row->highlight, HIGHLIGHT_NORMAL, row->renderSize); // Set all characters in the row array to the default highlight value
 
-    for (int i = 0; i < row->renderSize; i++) {
-        if (isdigit(row->render[i])) {
-            row->highlight[i] = HIGHLIGHT_NUMBER; // Only set digits to the highlight number
+    int previousSeparator = 1; // Beginning of a line is considered a separator, defaulted to true
+    int i = 0;
+    while (i < row->renderSize){
+        char c = row->render[i];
+        unsigned char previousHighlight = (i > 0) ? row->highlight[i - 1] : HIGHLIGHT_NORMAL;
+
+        // Color all numbers from now on
+        if (isdigit(c) && (previousSeparator || previousHighlight == HIGHLIGHT_NUMBER)){
+            row->highlight[i] = HIGHLIGHT_NUMBER;
+            i++;
+            previousSeparator = 0;
+            continue;
         }
+
+        previousSeparator = isSeparator(c);
+        i++;
     }
 }
 
