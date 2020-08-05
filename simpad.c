@@ -41,6 +41,13 @@ enum editorKey {
     PAGE_DOWN
 };
 
+// An enum containing the different highlight values in the highlight array 
+enum editorHighlight {
+    HIGHLIGHT_NORMAL = 0,
+    HIGHLIGHT_NUMBER,
+    HIGHLIGHT_MATCH
+};
+
 /************ DATA ************/
 
 typedef struct editorRow {
@@ -48,6 +55,7 @@ typedef struct editorRow {
     int renderSize;
     char *chars;
     char *render; // We can now control how to render tabs
+    unsigned char *highlight;
 } editorRow;
 
 struct editorConfig {
@@ -236,6 +244,30 @@ int getWindowSize(int *rows, int *cols) {
     }
 }
 
+/************ SYNTAX HIGHLIGHTING ************/
+
+void editorUpdateSyntax(editorRow *row){
+    row->highlight = realloc(row->highlight, row->renderSize);
+    memset(row->highlight, HIGHLIGHT_NORMAL, row->renderSize); // Set all characters in the row array to the default highlight value
+
+    for (int i = 0; i < row->renderSize; i++) {
+        if (isdigit(row->render[i])) {
+            row->highlight[i] = HIGHLIGHT_NUMBER; // Only set digits to the highlight number
+        }
+    }
+}
+
+int editorSyntaxToColor(int highlight){
+    switch (highlight){
+        case HIGHLIGHT_NUMBER:
+            return 31; // Red
+        case HIGHLIGHT_MATCH:
+            return 34; // Blue
+        default:
+            return 37; // White 
+    }
+}
+
 /************ ROW OPERATIONS ************/
 
 // Convert a chars index to a render index, and figure out how many spaces each tabbed space occupies
@@ -292,6 +324,9 @@ void editorUpdateRow(editorRow *row){
     // Index now contains the number of chars copied into row->render
     row->render[index] = '\0';
     row->renderSize = index;
+
+    // Update the highlighted array (All we are doing is updating the array in the event we choose to highlight it)
+    editorUpdateSyntax(row);
 }
 
 void editorInsertRow(int at, char *s, size_t length) {
@@ -308,6 +343,7 @@ void editorInsertRow(int at, char *s, size_t length) {
 
     E.row[at].renderSize = 0;
     E.row[at].render = NULL;
+    E.row[at].highlight = NULL;
     editorUpdateRow(&E.row[at]);
 
     E.numRows++;
@@ -317,6 +353,7 @@ void editorInsertRow(int at, char *s, size_t length) {
 void editorFreeRow(editorRow *row){
     free(row->render);
     free(row->chars);
+    free(row->highlight);
 }
 
 void editorDeleteRow(int at){
@@ -491,6 +528,14 @@ void editorFindCallback(char *query, int key){
     static int lastMatch = -1; // The prior search result (-1 if no result, or index of the last match row)
     static int direction = 1;  // 1 = down, -1 = up
 
+    static int savedHighlightedLine; // Which line needs to be restored
+    static char *savedHighlight = NULL;
+
+    if (savedHighlight) {
+        memcpy(E.row[savedHighlightedLine].highlight, savedHighlight, E.row[savedHighlightedLine].renderSize);
+        free(savedHighlight);
+        savedHighlight = NULL;
+    }
     if (key == '\r' || key == '\x1b'){ // User presses enter or escape, in which case they leave search mode
         lastMatch = -1;
         direction = 1;
@@ -530,6 +575,12 @@ void editorFindCallback(char *query, int key){
             E.cursorY = current;
             E.cursorX = editorRowRenderXToCursorX(row, match - row->render);
             E.rowOffset = E.numRows;
+
+            // Searched text using Ctrl+F is now highlighted
+            savedHighlightedLine = current;
+            savedHighlight = malloc(row->renderSize);
+            memcpy(savedHighlight, row->highlight, row->renderSize);
+            memset(&row->highlight[match - row->render], HIGHLIGHT_MATCH, strlen(query));
             break;
         }
     }
@@ -648,9 +699,34 @@ void editorDrawRows(struct abuf *ab) {
             if (len > E.termCols) {
                 len = E.termCols;
             }
-            bufferAppend(ab, &E.row[fileRow].render[E.colOffset], len);
-        }
+            char *c = &E.row[fileRow].render[E.colOffset];
+            unsigned char *highlight = &E.row[fileRow].highlight[E.colOffset];
+            int currentColor = -1;
 
+            // Cannot simply feed render substring to print into bufferAppend()
+            // We have to loop through each character 
+            for (int i = 0; i < len; i++){
+                if (highlight[i] == HIGHLIGHT_NORMAL) {
+                    if (currentColor != -1) {
+                        bufferAppend(ab, "\x1b[39m", 5); // Use the default text colour before printing
+                        currentColor = -1; // When we want the default text colour
+                    }
+                    bufferAppend(ab, &c[i], 1);
+                }
+                // Set text colour to the value that editorSyntaxToColor() returns
+                else {
+                    int color = editorSyntaxToColor(highlight[i]);
+                    if (color != currentColor) { 
+                        currentColor = color;
+                        char buf[16];
+                        int colorLen = snprintf(buf, sizeof(buf), "\x1b[%dm", color);
+                        bufferAppend(ab, buf, colorLen);
+                    }
+                    bufferAppend(ab, &c[i], 1);
+                }
+            }
+            bufferAppend(ab, "\x1b[39m", 5);
+        }
         bufferAppend(ab, "\x1b[K", 3);
         bufferAppend(ab, "\r\n", 2);
     }
