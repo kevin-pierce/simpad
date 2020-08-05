@@ -261,8 +261,9 @@ void editorUpdateSyntax(editorRow *row){
         char c = row->render[i];
         unsigned char previousHighlight = (i > 0) ? row->highlight[i - 1] : HIGHLIGHT_NORMAL;
 
-        // Color all numbers from now on
-        if (isdigit(c) && (previousSeparator || previousHighlight == HIGHLIGHT_NUMBER)){
+        // Color all numbers from now on (We can also now read numbers with a decimal)
+        if ((isdigit(c) && (previousSeparator || previousHighlight == HIGHLIGHT_NUMBER)) || 
+            (c == '.' && previousHighlight == HIGHLIGHT_NUMBER)){
             row->highlight[i] = HIGHLIGHT_NUMBER;
             i++;
             previousSeparator = 0;
