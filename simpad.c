@@ -299,8 +299,8 @@ void editorUpdateSyntax(editorRow *row){
 
     char **keywords = E.syntax->keywords;
 
-    char *slCommentStart = E.syntax->singleLineCmtStart;
-    int slCommentStartLen = slCommentStart ? strlen(slCommentStart) : 0;
+    char *scs = E.syntax->singleLineCmtStart;
+    int scsLen = scs ? strlen(scs) : 0;
 
     int previousSeparator = 1; // Beginning of a line is considered a separator, defaulted to true
     int inString = 0; // Tells us if we are in a string or not (until we hit a closing quote)
@@ -311,10 +311,9 @@ void editorUpdateSyntax(editorRow *row){
         unsigned char previousHighlight = (i > 0) ? row->highlight[i - 1] : HIGHLIGHT_NORMAL;
 
         // Ensure we are not in a string, and that there is some length to the comment
-        if (slCommentStartLen && !inString) {
-
+        if (scsLen && !inString) {
             // Check if the character is the start of a single line comment
-            if (strncmp(&row->render[i], slCommentStart, slCommentStartLen)) {
+            if (!strncmp(&row->render[i], scs, scsLen)) {
                 memset(&row->highlight[i], HIGHLIGHT_COMMENT, row->renderSize - i);
                 break;
             }
@@ -384,11 +383,11 @@ void editorUpdateSyntax(editorRow *row){
 int editorSyntaxToColor(int highlight){
     switch (highlight){
         case HIGHLIGHT_COMMENT:
-            return 32; // Green
-        case HIGHLIGHT_KEYWORD:
-            return 96; // High-Intensity Cyan
-        case HIGHLIGHT_KEYWORD_TYPE:
             return 36; // Cyan
+        case HIGHLIGHT_KEYWORD:
+            return 33; // High-Intensity Cyan
+        case HIGHLIGHT_KEYWORD_TYPE:
+            return 32; // Cyan
         case HIGHLIGHT_STRING:
             return 35; // Magenta
         case HIGHLIGHT_NUMBER:
@@ -871,7 +870,22 @@ void editorDrawRows(struct abuf *ab) {
             // Cannot simply feed render substring to print into bufferAppend()
             // We have to loop through each character 
             for (int i = 0; i < len; i++){
-                if (highlight[i] == HIGHLIGHT_NORMAL) {
+                // Translate non-printable characters into printable ones (all alphabetic control chars will be Capital letters)
+                // The 0 byte will be @, and any other non-printable chars will render as the ? 
+                // All non-printable characters will be rendered as white text on a black highlight
+                if (iscntrl(c[i])) {
+                    char symbol = (c[j] <= 26) ? '@' + c[j] : '?';
+                    bufferAppend(ab, '\x1b[7m', 4); // Invert colors
+                    bufferAppend(ab, &symbol, 1);   // Render non-printable char
+                    bufferAppend(ab, "\x1b[m", 3);  // Undo text formatting (We need to preserve text formatting going forward, however)
+                    // Preserve text formatting of printable chars following the rendering of the non-printable char
+                    if (currentColor != -1) {
+                        char buf[16];
+                        int colorLen = snprintf(buf, sizeof(buf), "\x1b[%dm", currentColor);
+                        bufferAppend(ab, buf, colorLen);
+                    }
+                }
+                else if (highlight[i] == HIGHLIGHT_NORMAL) {
                     if (currentColor != -1) {
                         bufferAppend(ab, "\x1b[39m", 5); // Use the default text colour before printing
                         currentColor = -1; // When we want the default text colour
