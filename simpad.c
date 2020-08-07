@@ -45,6 +45,7 @@ enum editorKey {
 enum editorHighlight {
     HIGHLIGHT_NORMAL = 0,
     HIGHLIGHT_NUMBER,
+    HIGHLIGHT_COMMENT,
     HIGHLIGHT_STRING,
     HIGHLIGHT_MATCH
 };
@@ -57,6 +58,7 @@ enum editorHighlight {
 struct editorSyntax {
     char *fileType; // Will display type of file to user in status bar
     char **fileMatch; // Array of strings that contains pattern to determine filetype
+    char *singleLineCmtStart; // A global single line comment start (set here because it may differ per language)
     int flags; // Determines whether we will highlight numbers / strings / comments for that filetype
 };
 
@@ -96,6 +98,7 @@ struct editorSyntax highlightDB[] = {
     {
         "c",
         C_HIGHLIGHT_EXTENSIONS,
+        "//",
         HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS
     },
 };
@@ -282,6 +285,9 @@ void editorUpdateSyntax(editorRow *row){
 
     if (E.syntax == NULL) return; // Do nothing 
 
+    char *slCommentStart = E.syntax->singleLineCmtStart;
+    int slCommentStartLen = slCommentStart ? strlen(slCommentStart) : 0;
+
     int previousSeparator = 1; // Beginning of a line is considered a separator, defaulted to true
     int inString = 0; // Tells us if we are in a string or not (until we hit a closing quote)
 
@@ -289,6 +295,16 @@ void editorUpdateSyntax(editorRow *row){
     while (i < row->renderSize){
         char c = row->render[i];
         unsigned char previousHighlight = (i > 0) ? row->highlight[i - 1] : HIGHLIGHT_NORMAL;
+
+        // Ensure we are not in a string, and that there is some length to the comment
+        if (slCommentStartLen && !inString) {
+
+            // Check if the character is the start of a single line comment
+            if (strncmp(&row->render[i], slCommentStart, slCommentStartLen)) {
+                memset(&row->highlight[i], HIGHLIGHT_COMMENT, row->renderSize - i);
+                break;
+            }
+        }
 
         if (E.syntax->flags & HL_HIGHLIGHT_STRINGS) {
             if (inString) {
@@ -333,6 +349,8 @@ void editorUpdateSyntax(editorRow *row){
 
 int editorSyntaxToColor(int highlight){
     switch (highlight){
+        case HIGHLIGHT_COMMENT:
+            return 32; // Green
         case HIGHLIGHT_STRING:
             return 35; // Magenta
         case HIGHLIGHT_NUMBER:
