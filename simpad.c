@@ -48,7 +48,15 @@ enum editorHighlight {
     HIGHLIGHT_MATCH
 };
 
+#define HL_HIGHLIGHT_NUMBERS (1<<0) // Highlight for numbers flag
+
 /************ DATA ************/
+
+struct editorSyntax {
+    char *fileType; // Will display type of file to user in status bar
+    char **fileMatch; // Array of strings that contains pattern to determine filetype
+    int flags; // Determines whether we will highlight numbers / strings / comments for that filetype
+};
 
 typedef struct editorRow {
     int size;
@@ -71,11 +79,26 @@ struct editorConfig {
     char *fileName;
     char statusMsg[80];
     time_t statusMsg_time;
+    struct editorSyntax *syntax;
     struct termios orig_termios;
 };
 
 // Declare E of type editorConfig
 struct editorConfig E;
+
+/************ FILETYPES ************/
+
+char *C_HIGHLIGHT_EXTENSIONS[] = {".c", ".h", ".cpp", NULL};
+
+struct editorSyntax highlightDB[] = {
+    {
+        "c",
+        C_HIGHLIGHT_EXTENSIONS,
+        HL_HIGHLIGHT_NUMBERS
+    },
+};
+// Store the length of the highlight database array
+#define highlightDBEntries (sizeof(highlightDB) / sizeof(highlightDB[0]))
 
 /************ FUNCTION PROTOTYPES ************/
 
@@ -255,19 +278,23 @@ void editorUpdateSyntax(editorRow *row){
     row->highlight = realloc(row->highlight, row->renderSize);
     memset(row->highlight, HIGHLIGHT_NORMAL, row->renderSize); // Set all characters in the row array to the default highlight value
 
+    if (E.syntax == NULL) return; // Do nothing 
+
     int previousSeparator = 1; // Beginning of a line is considered a separator, defaulted to true
     int i = 0;
     while (i < row->renderSize){
         char c = row->render[i];
         unsigned char previousHighlight = (i > 0) ? row->highlight[i - 1] : HIGHLIGHT_NORMAL;
 
-        // Color all numbers from now on (We can also now read numbers with a decimal)
-        if ((isdigit(c) && (previousSeparator || previousHighlight == HIGHLIGHT_NUMBER)) || 
-            (c == '.' && previousHighlight == HIGHLIGHT_NUMBER)){
-            row->highlight[i] = HIGHLIGHT_NUMBER;
-            i++;
-            previousSeparator = 0;
-            continue;
+        if (E.syntax->flags & HL_HIGHLIGHT_NUMBERS) { // Check if the number should even be highlighted for that current filetype
+            // Color all numbers from now on (We can also now read numbers with a decimal)
+            if ((isdigit(c) && (previousSeparator || previousHighlight == HIGHLIGHT_NUMBER)) || 
+                (c == '.' && previousHighlight == HIGHLIGHT_NUMBER)){
+                row->highlight[i] = HIGHLIGHT_NUMBER;
+                i++;
+                previousSeparator = 0;
+                continue;
+            }
         }
 
         previousSeparator = isSeparator(c);
@@ -283,6 +310,36 @@ int editorSyntaxToColor(int highlight){
             return 34; // Blue
         default:
             return 37; // White 
+    }
+}
+
+void editorSelectSyntaxHighlight() {
+    E.syntax = NULL;
+    if (E.fileName == NULL) return; // If there is no file name or there is no match, then there is no filetype
+
+    // Isolate the extension (find the last occurrence of the . character)
+    char *extension = strrchr(E.fileName, '.'); 
+
+    for (unsigned int j = 0; j < highlightDBEntries; j++) {
+        struct editorSyntax *s = &highlightDB[j];
+
+        unsigned int i = 0;
+
+        while (s->fileMatch[i]) {
+            int isExtension = (s->fileMatch[i][0] == '.');
+            if ((isExtension && extension && !strcmp(extension, s->fileMatch[i])) || 
+                (!isExtension && strstr(E.fileName, s->fileMatch[i]))) {
+                    E.syntax = s;
+
+                    // Once we set the filetype after creating a file, we re-highlight everything
+                    int fileRow;
+                    for (fileRow = 0; fileRow < E.numRows; fileRow++){
+                        editorUpdateSyntax(&E.row[fileRow]);
+                    }
+                    return;
+            }
+            i++;
+        }
     }
 }
 
@@ -487,6 +544,8 @@ void editorOpen(char *fileName) {
     free(E.fileName);
     E.fileName = strdup(fileName);
 
+    editorSelectSyntaxHighlight();
+
     FILE *filePointer = fopen(fileName, "r");
     if (!filePointer) {
         die("fopen");
@@ -515,6 +574,7 @@ void editorSave() {
             editorSetStatusMessage("Save aborted!");
             return;
         }
+        editorSelectSyntaxHighlight();
     } 
 
     int length;
@@ -754,7 +814,7 @@ void editorDrawStatusBar(struct abuf *ab){
     bufferAppend(ab, "\x1b[7m", 4);
     char status[80], renderStatus[80];
     int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", E.fileName ? E.fileName : "[No Name]", E.numRows, E.changed ? "(modified)" : "");
-    int renderLen = snprintf(renderStatus, sizeof(renderStatus), "%d/%d", E.cursorY + 1, E.numRows); // Current line number
+    int renderLen = snprintf(renderStatus, sizeof(renderStatus), "%s | %d/%d", E.syntax ? E.syntax->fileType : "no filetype", E.cursorY + 1, E.numRows); // Current line number
     // If the status string is too long, cut it short
     if (len > E.termCols) {
         len = E.termCols;
@@ -1017,6 +1077,7 @@ void initEditor() {
     E.fileName = NULL;
     E.statusMsg[0] = '\0';
     E.statusMsg_time = 0;
+    E.syntax = NULL; // When NULL, there is no filetype, and hence no syntax highlighting
 
     if (getWindowSize(&E.termRows, &E.termCols) == -1) {
         die("getWindowSize");
