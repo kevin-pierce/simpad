@@ -45,6 +45,8 @@ enum editorKey {
 enum editorHighlight {
     HIGHLIGHT_NORMAL = 0,
     HIGHLIGHT_NUMBER,
+    HIGHLIGHT_KEYWORD,
+    HIGHLIGHT_KEYWORD_TYPE,
     HIGHLIGHT_COMMENT,
     HIGHLIGHT_STRING,
     HIGHLIGHT_MATCH
@@ -58,6 +60,7 @@ enum editorHighlight {
 struct editorSyntax {
     char *fileType; // Will display type of file to user in status bar
     char **fileMatch; // Array of strings that contains pattern to determine filetype
+    char **keywords;
     char *singleLineCmtStart; // A global single line comment start (set here because it may differ per language)
     int flags; // Determines whether we will highlight numbers / strings / comments for that filetype
 };
@@ -93,11 +96,20 @@ struct editorConfig E;
 /************ FILETYPES ************/
 
 char *C_HIGHLIGHT_EXTENSIONS[] = {".c", ".h", ".cpp", NULL};
+// An array containing all keywords in the C language, which we can use when highlighting text 
+char *C_HIGHLIGHT_keywords[] = {
+  "switch", "if", "while", "for", "break", "continue", "return", "else",
+  "struct", "union", "typedef", "static", "enum", "class", "case",
+  "int|", "long|", "double|", "float|", "char|", "unsigned|", "signed|",
+  "void|", NULL
+};
+
 
 struct editorSyntax highlightDB[] = {
     {
         "c",
         C_HIGHLIGHT_EXTENSIONS,
+        C_HIGHLIGHT_keywords,
         "//",
         HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS
     },
@@ -285,6 +297,8 @@ void editorUpdateSyntax(editorRow *row){
 
     if (E.syntax == NULL) return; // Do nothing 
 
+    char **keywords = E.syntax->keywords;
+
     char *slCommentStart = E.syntax->singleLineCmtStart;
     int slCommentStartLen = slCommentStart ? strlen(slCommentStart) : 0;
 
@@ -325,7 +339,7 @@ void editorUpdateSyntax(editorRow *row){
                 if (c == '"' || c == '\''){ // Doublequoted and single quoted strings (if we are not currently in a string)
                     inString = c;
                     row->highlight[i] = HIGHLIGHT_STRING;
-                    i++;m
+                    i++;
                     continue;
                 }
             }
@@ -341,6 +355,26 @@ void editorUpdateSyntax(editorRow *row){
                 continue;
             }
         }
+        // We don't want to highlight keywords that exist within a string, so we ensure theres a separator
+        if (previousSeparator) {
+            int j;
+            for (j = 0; keywords[j]; j++) {
+                int keywordLen = strlen(keywords[j]);
+                int keywordType = keywords[j][keywordLen - 1] == '|';
+                if (keywordType) keywordLen--;
+
+                if (!strncmp(&row->render[i], keywords[j], keywordLen) &&
+                    isSeparator(row->render[i + keywordLen])) {
+                        memset(&row->highlight[i], keywordType ? HIGHLIGHT_KEYWORD_TYPE : HIGHLIGHT_KEYWORD, keywordLen);
+                        i += keywordLen;
+                        break;
+                }
+            }
+            if (keywords[j] != NULL) {
+                previousSeparator = 0;
+                continue;
+            }
+        }
 
         previousSeparator = isSeparator(c);
         i++;
@@ -351,6 +385,10 @@ int editorSyntaxToColor(int highlight){
     switch (highlight){
         case HIGHLIGHT_COMMENT:
             return 32; // Green
+        case HIGHLIGHT_KEYWORD:
+            return 96; // High-Intensity Cyan
+        case HIGHLIGHT_KEYWORD_TYPE:
+            return 36; // Cyan
         case HIGHLIGHT_STRING:
             return 35; // Magenta
         case HIGHLIGHT_NUMBER:
