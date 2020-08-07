@@ -48,6 +48,7 @@ enum editorHighlight {
     HIGHLIGHT_KEYWORD,
     HIGHLIGHT_KEYWORD_TYPE,
     HIGHLIGHT_COMMENT,
+    HIGHLIGHT_MULTILINE_COMMENT,
     HIGHLIGHT_STRING,
     HIGHLIGHT_MATCH
 };
@@ -62,6 +63,8 @@ struct editorSyntax {
     char **fileMatch; // Array of strings that contains pattern to determine filetype
     char **keywords;
     char *singleLineCmtStart; // A global single line comment start (set here because it may differ per language)
+    char *multilineCommentStart; // This will be /*
+    char *multilineCommentEnd;  // This will be */
     int flags; // Determines whether we will highlight numbers / strings / comments for that filetype
 };
 
@@ -110,7 +113,7 @@ struct editorSyntax highlightDB[] = {
         "c",
         C_HIGHLIGHT_EXTENSIONS,
         C_HIGHLIGHT_keywords,
-        "//",
+        "//", "/*", "*/", // All comment-related start and end chars
         HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS
     },
 };
@@ -299,11 +302,18 @@ void editorUpdateSyntax(editorRow *row){
 
     char **keywords = E.syntax->keywords;
 
+    // Aliases for singleline, multiline start, and multiline end comment chars
     char *scs = E.syntax->singleLineCmtStart;
+    char *mcs = E.syntax->multilineCommentStart;
+    char *mce = E.syntax->multilineCommentEnd;
+
     int scsLen = scs ? strlen(scs) : 0;
+    int mcsLen = mcs ? strlen(mcs) : 0;
+    int mceLen = mce ? strlen(mce) : 0;
 
     int previousSeparator = 1; // Beginning of a line is considered a separator, defaulted to true
     int inString = 0; // Tells us if we are in a string or not (until we hit a closing quote)
+    int inComment = 0 ; // Keep track of if we are in a comment (only for multiline)
 
     int i = 0;
     while (i < row->renderSize){
@@ -316,6 +326,31 @@ void editorUpdateSyntax(editorRow *row){
             if (!strncmp(&row->render[i], scs, scsLen)) {
                 memset(&row->highlight[i], HIGHLIGHT_COMMENT, row->renderSize - i);
                 break;
+            }
+        }
+        // Ensure the strings are of length > 0, and ensure we are not in a string
+        if (mcsLen && mceLen && !inString) {
+            if (inComment) {
+                // Begin highlighting the comment if inside a comment
+                row->highlight[i] = HIGHLIGHT_MULTILINE_COMMENT;
+                if (!strncmp(&row->render[i], mce, mceLen)){
+                    memset(&row->highlight[i], HIGHLIGHT_MULTILINE_COMMENT, mceLen);
+                    i += mceLen;
+                    inComment = 0;
+                    previousSeparator = 1;
+                    continue;
+                }
+                else {
+                    i++;
+                    continue;
+                }
+            }
+            // If we are not in a ml comment, we check if we are at the beginning
+            else if (!strncmp(&row->render[i], mcs, mceLen)) {
+                memset(&row->highlight[i], HIGHLIGHT_MULTILINE_COMMENT, mcsLen);
+                i += mcsLen;
+                inComment = 1;
+                continue;
             }
         }
 
@@ -382,12 +417,13 @@ void editorUpdateSyntax(editorRow *row){
 
 int editorSyntaxToColor(int highlight){
     switch (highlight){
+        case HIGHLIGHT_MULTILINE_COMMENT:
         case HIGHLIGHT_COMMENT:
             return 36; // Cyan
         case HIGHLIGHT_KEYWORD:
-            return 33; // High-Intensity Cyan
+            return 33; // Yellow
         case HIGHLIGHT_KEYWORD_TYPE:
-            return 32; // Cyan
+            return 32; // Green
         case HIGHLIGHT_STRING:
             return 35; // Magenta
         case HIGHLIGHT_NUMBER:
@@ -874,8 +910,8 @@ void editorDrawRows(struct abuf *ab) {
                 // The 0 byte will be @, and any other non-printable chars will render as the ? 
                 // All non-printable characters will be rendered as white text on a black highlight
                 if (iscntrl(c[i])) {
-                    char symbol = (c[j] <= 26) ? '@' + c[j] : '?';
-                    bufferAppend(ab, '\x1b[7m', 4); // Invert colors
+                    char symbol = (c[i] <= 26) ? '@' + c[i] : '?';
+                    bufferAppend(ab, "\x1b[7m", 4); // Invert colors
                     bufferAppend(ab, &symbol, 1);   // Render non-printable char
                     bufferAppend(ab, "\x1b[m", 3);  // Undo text formatting (We need to preserve text formatting going forward, however)
                     // Preserve text formatting of printable chars following the rendering of the non-printable char
