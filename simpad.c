@@ -45,10 +45,12 @@ enum editorKey {
 enum editorHighlight {
     HIGHLIGHT_NORMAL = 0,
     HIGHLIGHT_NUMBER,
+    HIGHLIGHT_STRING,
     HIGHLIGHT_MATCH
 };
 
 #define HL_HIGHLIGHT_NUMBERS (1<<0) // Highlight for numbers flag
+#define HL_HIGHLIGHT_STRINGS (1<<1) // Highlight for text flag
 
 /************ DATA ************/
 
@@ -94,7 +96,7 @@ struct editorSyntax highlightDB[] = {
     {
         "c",
         C_HIGHLIGHT_EXTENSIONS,
-        HL_HIGHLIGHT_NUMBERS
+        HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS
     },
 };
 // Store the length of the highlight database array
@@ -281,10 +283,37 @@ void editorUpdateSyntax(editorRow *row){
     if (E.syntax == NULL) return; // Do nothing 
 
     int previousSeparator = 1; // Beginning of a line is considered a separator, defaulted to true
+    int inString = 0; // Tells us if we are in a string or not (until we hit a closing quote)
+
     int i = 0;
     while (i < row->renderSize){
         char c = row->render[i];
         unsigned char previousHighlight = (i > 0) ? row->highlight[i - 1] : HIGHLIGHT_NORMAL;
+
+        if (E.syntax->flags & HL_HIGHLIGHT_STRINGS) {
+            if (inString) {
+                row->highlight[i] = HIGHLIGHT_STRING;
+                // Exempt escaped quotes, which don't close the string
+                if (c == '\\' && i + 1 < row->renderSize) {
+                    row->highlight[i + 1] = HIGHLIGHT_STRING;
+                    i += 2;
+                    continue;
+                }
+                if (c == inString) {
+                    inString = 0;
+                }
+                i++;
+                previousSeparator = 1;
+                continue;
+            } else {
+                if (c == '"' || c == '\''){ // Doublequoted and single quoted strings (if we are not currently in a string)
+                    inString = c;
+                    row->highlight[i] = HIGHLIGHT_STRING;
+                    i++;m
+                    continue;
+                }
+            }
+        }
 
         if (E.syntax->flags & HL_HIGHLIGHT_NUMBERS) { // Check if the number should even be highlighted for that current filetype
             // Color all numbers from now on (We can also now read numbers with a decimal)
@@ -304,6 +333,8 @@ void editorUpdateSyntax(editorRow *row){
 
 int editorSyntaxToColor(int highlight){
     switch (highlight){
+        case HIGHLIGHT_STRING:
+            return 35; // Magenta
         case HIGHLIGHT_NUMBER:
             return 31; // Red
         case HIGHLIGHT_MATCH:
