@@ -1025,7 +1025,7 @@ void editorRefreshScreen() {
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cursorY - E.rowOffset) + 1, (E.renderX - E.colOffset) + 1);
     bufferAppend(&ab, buf, strlen(buf));
 
-    bufferAppend(&ab, "\x1b[?25l", 6);
+    bufferAppend(&ab, "\x1b[?25h", 6);
 
     write(STDOUT_FILENO, ab.b, ab.len);
     bufferFree(&ab);
@@ -1105,7 +1105,7 @@ void editorMoveCursor(int key) {
         case ARROW_RIGHT:
             if (row && E.cursorX < row->size) {
                 E.cursorX++;
-            } else if (row && E.cursorX == row -> size){
+            } else if (row && E.cursorX == row->size){
                 E.cursorY++;
                 E.cursorX = 0;
             }
@@ -1158,7 +1158,7 @@ void editorProcessKeypress() {
 
         // Use Fn + right arrow to bring cursor to end of line
         case END_KEY:
-            if (E.cursorY < E.numRows) {
+            if (E. cursorY < E.numRows) {
                 E.cursorX = E.row[E.cursorY].size;
             }
             break;
