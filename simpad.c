@@ -320,8 +320,8 @@ void editorUpdateSyntax(editorRow *row){
         char c = row->render[i];
         unsigned char previousHighlight = (i > 0) ? row->highlight[i - 1] : HIGHLIGHT_NORMAL;
 
-        // Ensure we are not in a string, and that there is some length to the comment
-        if (scsLen && !inString) {
+        // Ensure we are not in a string / comment and that there is some length to the comment
+        if (scsLen && !inString && !inComment) {
             // Check if the character is the start of a single line comment
             if (!strncmp(&row->render[i], scs, scsLen)) {
                 memset(&row->highlight[i], HIGHLIGHT_COMMENT, row->renderSize - i);
