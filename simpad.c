@@ -69,11 +69,13 @@ struct editorSyntax {
 };
 
 typedef struct editorRow {
+    int index;
     int size;
     int renderSize;
     char *chars;
     char *render; // We can now control how to render tabs
     unsigned char *highlight;
+    int highlightOpenComment; // Boolean that tells us if there is an unclosed ml comment on the line
 } editorRow;
 
 struct editorConfig {
@@ -313,7 +315,7 @@ void editorUpdateSyntax(editorRow *row){
 
     int previousSeparator = 1; // Beginning of a line is considered a separator, defaulted to true
     int inString = 0; // Tells us if we are in a string or not (until we hit a closing quote)
-    int inComment = 0 ; // Keep track of if we are in a comment (only for multiline)
+    int inComment = (row->index > 0 && E.row[row->index - 1].highlightOpenComment); // Keep track of if we are in a comment (only for multiline)
 
     int i = 0;
     while (i < row->renderSize){
@@ -413,6 +415,11 @@ void editorUpdateSyntax(editorRow *row){
         previousSeparator = isSeparator(c);
         i++;
     }
+    // If we have not closed a comment, then we must change all the following syntax to be highlighted until we close the comment
+    int isChanged = (row->highlightOpenComment != inComment);
+    row->highlightOpenComment = inComment; // Set current row openComment value to whatever state was left over (open / closed)
+    if (isChanged && row->index + 1 < E.numRows)
+        editorUpdateSyntax(&E.row[row->index+1]);
 }
 
 int editorSyntaxToColor(int highlight){
@@ -532,6 +539,12 @@ void editorInsertRow(int at, char *s, size_t length) {
     // Multiply num of bytes each row occupies by the number of rows we want
     E.row = realloc(E.row, sizeof(editorRow) * (E.numRows + 1));
     memmove(&E.row[at + 1], &E.row[at], sizeof(editorRow) * (E.numRows - at)); // make room at specified index for the new row
+    // Update the index value if a newline is inserted
+    for (int j = at + 1; j <= E.numRows; j++) {
+        E.row[j].index++;
+    }
+
+    E.row[at].index = at;
 
     E.row[at].size = length;
     E.row[at].chars = malloc(length + 1);
@@ -541,6 +554,7 @@ void editorInsertRow(int at, char *s, size_t length) {
     E.row[at].renderSize = 0;
     E.row[at].render = NULL;
     E.row[at].highlight = NULL;
+    E.row[at].highlightOpenComment = 0;
     editorUpdateRow(&E.row[at]);
 
     E.numRows++;
@@ -557,6 +571,11 @@ void editorDeleteRow(int at){
     if (at < 0 || at >= E.numRows) return; // Validate the at index
     editorFreeRow(&E.row[at]);
     memmove(&E.row[at], &E.row[at + 1], sizeof(editorRow) * (E.numRows - at - 1)); // Overwrite the deleted row with the rest of the rows that come after it
+
+    // Update the index value if a line is deleted
+    for (int j = at; j < E.numRows; j++) {
+        E.row[j].index--;
+    }
     E.numRows--; // Decrement the total number of rows by 1
     E.changed++;
 }
